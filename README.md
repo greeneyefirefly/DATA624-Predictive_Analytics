@@ -1,1 +1,1 @@
-# DATA624-Predictive_Analytics
+This repository houses all codes written for Predictive Analytics.
