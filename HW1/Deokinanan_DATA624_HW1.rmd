@@ -1,0 +1,221 @@
+---
+title: 'CUNY MSDS DATA 624 HW #1'
+author: "Samantha Deokinanan"
+date: "September 6, 2020"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: pygments
+---
+
+Textbook: Hyndman, R.J., & Athanasopoulos, G. (2018) Forecasting: principles and practice, 2nd edition, OTexts: Melbourne, Australia. [Link](OTexts.com/fpp2). Accessed on August 31, 2020.
+
+
+### Exercise 2.1
+
+Use the help function to explore what the series gold, woolyrnq and gas represent.
+
+```{r message=FALSE, warning=FALSE}
+# load the necessary libraries
+library(forecast)
+library(fpp2)
+library(ggplot2)
+
+# use either help() or ?keyword to obtain documentation on the item, e.g. help(gold) or ?gold
+
+# Data set structure
+str(gold)
+str(woolyrnq)
+str(gas)
+```
+
+The help system provides the following documentation on the listed time series data found in the `forecast` library:
+
+* `gold` - Time series data of daily morning gold prices in US dollars from 1 January 1985 – 31 March 1989.
+
+* `woolyrnq` - Time series data of quarterly production of woollen yarn in Australia: tonnes, from Mar 1965 – Sept 1994.
+
+* `gas` - Time series data of Australian monthly gas production: 1956–1995.
+
+a. Use autoplot() to plot each of these in separate plots. 
+```{r}
+autoplot(gold) + labs(title = "Daily Morning Gold Prices", subtitle = "1 Jan 1985 – 31 Mar 1989", x = "Number of Day", y = "Price, in US dollars") + scale_y_continuous(labels = scales::dollar_format(scale = 1)) 
+```
+
+The daily morning gold price appears to have an upward trend but it reverts downward after about 750 days. There is also an obvious outlier around this time.
+
+```{r}
+autoplot(woolyrnq) + labs(title = "Woollen Yarn Production in Australia", subtitle = "Quarterly, Mar 1965 – Sep 1994", x = "Year",  y = "Weight Produced, in tonne")
+```
+
+The quarterly woollen yarn production in Australia shows that there is no apparent trend in the data over this period. But there appears to be some cyclic behavior with a period of about 7 years.
+
+```{r}
+autoplot(gas) + labs(title = "Gas Production in Australia", subtitle = "Monthly, 1956–1995", x = "Year", y = "Amount Produced")
+```
+
+The Australian monthly gas production shows a strong increasing trend, with strong seasonality. There is no evidence of any cyclic behavior.
+
+b. What is the frequency of each series? Hint: apply the frequency() function. 
+
+```{r}
+sprintf("The frequency for the Gold time series data is %d. Based on the description, it is known that is a daily record.", frequency(gold))
+
+sprintf("The frequency for the Woollen Yarn time series data is %d or quarterly.", frequency(woolyrnq))
+
+sprintf("The frequency for the Gas time series data is %d or monthly.", frequency(gas))
+```
+
+c. Use which.max() to spot the outlier in the gold series. Which observation was it?
+
+```{r}
+sprintf("A possible outlier in the Gold series is on day %d, which recorded a price of US$%0.2f.", which.max(gold), gold[which.max(gold)])
+```
+
+
+### Exercise 2.2
+
+Download the file `tute1.csv` from the book website, open it in Excel (or some other spreadsheet application), and review its contents. You should find four columns of information. Columns B through D each contain a quarterly series, labelled Sales, AdBudget and GDP. Sales contains the quarterly sales for a small company over the period 1981-2005. AdBudget is the advertising budget and GDP is the gross domestic product. All series have been adjusted for inflation.
+
+a. You can read the data into R with the following script:
+
+```{r}
+tute1 <- read.csv("tute1.csv", header=TRUE)
+View(tute1)
+```
+
+b. Convert the data to time series
+
+```{r}
+mytimeseries <- ts(tute1[,-1], start=1981, frequency=4)
+```
+
+(The [,-1] removes the first column which contains the quarters as we don’t need them now.)
+
+c. Construct time series plots of each of the three series. Check what happens when you don’t include facets=TRUE.
+
+```{r}
+autoplot(mytimeseries, facets=TRUE)
+
+autoplot(mytimeseries)
+```
+
+Without facets, a legend is generated to distinguish among the series. This is an important feature to note, particularly if data overlap making it difficult to read.
+
+### Exercise 2.3 
+
+Download some monthly Australian retail data from the book website. These represent retail sales in various categories for different Australian states, and are stored in a MS-Excel file.
+
+a. You can read the data into R with the following script:
+
+```{r}
+retaildata <- readxl::read_excel("retail.xlsx", skip=1)
+```
+
+The second argument (skip=1) is required because the Excel sheet has two header rows.
+
+b. Select one of the time series as follows (but replace the column name with your own chosen column):
+
+```{r}
+myts <- ts(retaildata[, 13], frequency=12, start=c(1982,4))
+```
+
+c. Explore your chosen retail time series using the following functions. Can you spot any seasonality, cyclicity and trend? What do you learn about the series?
+
+```{r}
+autoplot(myts) + geom_smooth(method = 'loess', formula = y~x) + labs(title = "New South Wales - Department Stores", x = "Year", y = "Sales")
+```
+
+The plot above distinctively highlights strong seasonality, in addition to an upward trend. While there are slight dips, there is not strong visual evidence of cyclic behavior.
+
+```{r}
+ggseasonplot(myts, year.labels = FALSE, continuous = TRUE) + labs(title = "New South Wales - Department Stores", x = "Month", y = "Sales")
+```
+
+The seasonal plot shows that there is a large drop in sales in January each year, clearly coincides with the Christmas holiday shopping which seems to begin in November. The sales trend then begins to steadily rise in March, with some fluctuations over the months, but noticeable decreases in August before it increases steadily once more.
+
+```{r}
+ggsubseriesplot(myts) + labs(title = "New South Wales - Department Stores", x = "Month", y = "Sales")
+```
+
+Another look at the seasonal patterns via a seasonal subseries plot, it is clear that there is a steadily increase in sales after August, and the max is hit during the month of December.
+
+```{r}
+gglagplot(myts) + labs(title = "New South Wales - Department Stores")
+```
+
+The lag plots are quite interesting to look at for seasonality relationships. There is a strong, positive autocorrelation in lag, whereas there are a few months in the other lags that does not highlights a strong relationship.
+
+```{r}
+ggAcf(myts, lag = 48) + labs(title = "New South Wales - Department Stores", x = "Year", y = "Sales")
+```
+
+The ACF reveals the seasonality and trend of the sale over the months. For example, $r_{12}$ is higher than all other lags. This is due to the seasonal pattern in the data: the peaks tend to be 12 months apart. Because substantially more than 5% of spikes are outside the bounds of the blue dashed line, the series is not white noise.
+
+Overall, this column of the retail dataset revealed the trend and seasonality of the New Sought Wales - Department Stores. It is likely that due to holiday shopping, seasonality can be clearly seen as the months of December are always are the peak sale for each year, and the steady increase leading to it can be seen.
+
+### Exercise 2.6
+
+Use the following graphics functions: `autoplot()`, `ggseasonplot()`, `ggsubseriesplot()`, `gglagplot()`, `ggAcf()` and explore features from the following time series: `hsales`, `usdeaths`, `bricksq`, `sunspotarea`, `gasoline`.
+
+Can you spot any seasonality, cyclicity and trend? What do you learn about the series?
+
+```{r}
+myts = hsales
+title = "Sales of One-family Houses"
+autoplot(myts) + geom_smooth(method = 'loess', formula = y~x) + labs(title = title)
+ggseasonplot(myts, year.labels = FALSE, continuous = TRUE) + labs(title = title)
+ggsubseriesplot(myts) + labs(title = title)
+gglagplot(myts) + labs(title = title)
+ggAcf(myts, lag.max = 48) + labs(title = title)
+```
+
+Exploring the plots of the time series `hsales`, it is evident that there is strong seasonality, but no apparent trend. There are noticeable dips in the early turns of a decade, therefore, it may suggest cyclic behavior with a period of 10 years. The seasonal plot shows that there is an increase in sales in March each year, after which for most years, the following months it declines. Another look at the seasonal patterns via a seasonal subseries plot reveals that there is a rapid increase in sales from January to March, and then there is steadily decrease until August where it increases once again. Afterward, there is a rapid decline in sales. All further suggesting seasonality. The lag plots highlight that there is a positive autocorrelation in lag 1 only. So looking at the ACF, it highlights that there is seasonality with no trend of the sale over the months and that there are some signals in this time series component that cannot be used in a forecasting approach. Overall, these plots revealed a great deal about the seasonality and a little bit about the cyclic behavior of sales of one-family houses.
+
+```{r}
+myts = usdeaths
+title = "Accidental Deaths in USA"
+autoplot(myts) + geom_smooth(method = 'loess', formula = y~x) + labs(title = title)
+ggseasonplot(myts, year.labels = FALSE, continuous = TRUE) + labs(title = title)
+ggsubseriesplot(myts) + labs(title = title)
+gglagplot(myts) + labs(title = title)
+ggAcf(myts, lag.max = 48) + labs(title = title)
+```
+
+Exploring the plots of the time series `usdeaths`, it is evident that there is strong seasonality, but no apparent trend and cyclicity. The seasonal plots show that, for most years, there is an increase in accidental deaths from February to July each year. The lag plots highlight that there is a strong, positive autocorrelation in lag 12. The ACF reveals the seasonality with no trend but is only a few lags that clearly exceed the blue line suggesting there is possible some signal in this time series component that can be used in a forecasting approach. Overall, these plots revealed the seasonality of monthly accidental deaths in USA.
+
+```{r}
+myts = bricksq
+title = "Clay Brick Production: 1956–1994"
+autoplot(myts) + geom_smooth(method = 'loess', formula = y~x) + labs(title = title)
+ggseasonplot(myts, year.labels = FALSE, continuous = TRUE) + labs(title = title)
+ggsubseriesplot(myts) + labs(title = title)
+gglagplot(myts) + labs(title = title)
+ggAcf(myts, lag.max = 36) + labs(title = title)
+```
+
+Exploring the plots of the time series `bricksq`, it is evident that there is an upward trend. There are noticeable dips about every 3-5 years, therefore, it may suggest cyclic behavior. The seasonal plot shows that Q1 is the lowest whereas Q3 is the highest. The lag plots and autocorrelation plot show that only positive autocorrelation can be observed for the lags, and the slow decrease in the ACF is due to the trend. Overall, these plots depicts the trend, seasonality and cyclic behavior of clay brick production in Australian in 1956 - 1994.
+
+```{r}
+myts = sunspotarea
+title = "Annual Average Sunspot Area"
+autoplot(myts) + geom_smooth(method = 'loess', formula = y~x) + labs(title = title)
+# ggseasonplot(myts, year.labels = FALSE, continuous = TRUE) + labs(title = title)
+# ggsubseriesplot(myts) + labs(title = title)
+gglagplot(myts) + labs(title = title)
+ggAcf(myts, lag.max = 48) + labs(title = title)
+```
+
+Exploring the plots of the time series `sunspotarea`, because it was annually recorded, there is no information on the seasonality. Because of how the data was recorded, the seasonal plots were not plotted. There is no apparent trend but there seems to be cyclic behavior that occurs over a period of 10 years. The ACF further reveals the lack of a trend and some white noise series. Overall, these plots revealed the cyclic behavior of annual averages of the daily sunspot areas.
+
+```{r}
+myts = gasoline
+title = "US Finished Motor Gasoline Product Supplied"
+autoplot(myts) + geom_smooth(method = 'loess', formula = y~x) + labs(title = title)
+ggseasonplot(myts, year.labels = FALSE, continuous = TRUE) + labs(title = title)
+# ggsubseriesplot(myts) + labs(title = title)
+gglagplot(myts) + labs(title = title)
+ggAcf(myts, lag.max = 200) + labs(title = title)
+```
+
+Exploring the plots of the time series `gasoline`, it is evident that there is an increasing trend. There is also no noticeable cyclic behavior but the ACF reveals the seasonality with the trend of the over the 52-weeks. Because the weekly data is both large and non-integer, the seasonal subseries plot was not plotted. Overall, these plots revealed both the trend and seasonality of US finished motor gasoline product supplied.
