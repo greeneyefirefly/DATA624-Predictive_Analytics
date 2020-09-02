@@ -144,7 +144,7 @@ Another look at the seasonal patterns via a seasonal subseries plot, it is clear
 gglagplot(myts) + labs(title = "New South Wales - Department Stores")
 ```
 
-The lag plots are quite interesting to look at for seasonality relationships. There is a strong, positive autocorrelation in lag, whereas there are a few months in the other lags that does not highlights a strong relationship.
+The lag plots are quite interesting to look at for seasonality relationships. There is a strong, positive autocorrelation for all the months in lag 12, whereas there are a few months in the other lags highlights a negative relationship.
 
 ```{r}
 ggAcf(myts, lag = 48) + labs(title = "New South Wales - Department Stores", x = "Year", y = "Sales")
