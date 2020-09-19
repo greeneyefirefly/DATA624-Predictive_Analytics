@@ -1,0 +1,197 @@
+---
+title: ' CUNY MSDS DATA 624 HW #3'
+author: "Samantha Deokinanan"
+date: "September 20, 2020"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: pygments
+---
+
+*Textbook: Hyndman, R.J., & Athanasopoulos, G. (2018) Forecasting: principles and practice, 2nd edition, OTexts: Melbourne, Australia. [Link](OTexts.com/fpp2). Accessed on September 7, 2020.*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = 'center', message = FALSE, warning = FALSE)
+```
+
+```{r}
+# Required R packages
+library(fpp2)
+library(seasonal)
+```
+
+### Exercise 6.2  
+
+The `plastics` data set consists of the monthly sales (in thousands) of product A for a plastics manufacturer for five years.
+
+a. Plot the time series of sales of product A. Can you identify seasonal fluctuations and/or a trend-cycle?  
+
+```{r}
+autoplot(plastics) + 
+  labs(title = "Sales of Product A for a Plastics Manufacturer", 
+       x = "Time, Year-Count", y = "Sales") +
+  scale_y_continuous(labels = scales::dollar_format(scale = 1, suffix = "K"))
+
+ggseasonplot(plastics, year.labels = FALSE, continuous = TRUE) + 
+  labs(title = "Sales of Product A for a Plastics Manufacturer", 
+       x = "Month", y = "Sales") + 
+  scale_y_continuous(labels = scales::dollar_format(scale = 1, suffix = "K"))
+
+ggsubseriesplot(plastics) + 
+  labs(title = "Sales of Product A for a Plastics Manufacturer", 
+       x = "Month", y = "Sales") + 
+  scale_y_continuous(labels = scales::dollar_format(scale = 1, suffix = "K"))
+```
+
+The plots above distinctively highlight strong seasonality, in addition to an upward trend. There is no strong visual evidence of cyclic behavior. More specifically, the seasonal plot shows that there is a usual increase in sales from February that peaks August - September before it declines, as shown on the seasonal subseries plot.
+
+b. Use a classical multiplicative decomposition to calculate the trend-cycle and seasonal indices.  
+
+```{r}
+plastics %>% decompose(type = "multiplicative") %>% autoplot() + 
+  labs(title = "Classical Multiplicative Decomposition", x = "Time, Year-Count") 
+```
+
+
+c. Do the results support the graphical interpretation from Part A?  
+
+The results from Part A do parallel the classical multiplicative decomposition. It separates and highlights the seasonality of 1 year and the increasing trend. While it does give an overall impression of the time series, the seasonal plot in this view is a bit difficult to interpret due to the x-axes not able to show the monthly distribution.
+
+d. Compute and plot the seasonally adjusted data.  
+
+```{r}
+plastics_decomp = plastics %>% decompose(type = "multiplicative")
+
+autoplot(plastics, series = "Plastics") +
+  autolayer(seasadj(plastics_decomp), series = "Seasonally Adjusted") + 
+  labs(title = "Seasonally Adjusted: Sales of Product A", 
+       x = "Time, Year-Count", y = "Sales") + 
+  scale_y_continuous(labels = scales::dollar_format(scale = 1, suffix = "K")) +
+  theme(legend.title = element_blank(), legend.position = "top")
+```
+
+When the plastic time series was seasonally adjusted, it highlights variation possibly due to underlying event(s) related to sales during this period rather than the seasonal variation. 
+
+e. Change one observation to be an outlier (e.g., add 500 to one observation), and recompute the seasonally adjusted data. What is the effect of the outlier?  
+
+```{r}
+# Added outlier
+plastics.outlier = plastics
+plastics.outlier[27] = plastics.outlier[27] + 525
+
+# Decomposition
+plastics_decomp.2 = plastics.outlier %>% decompose(type = "multiplicative") 
+
+plastics_decomp.2 %>% autoplot() + 
+  labs(title = "Classical Multiplicative Decomposition", subtitle = "Added outlier", 
+       x = "Time, Year-Count") 
+
+autoplot(plastics.outlier, series = "Plastics") +
+  autolayer(seasadj(plastics_decomp.2), series = "Seasonally Adjusted") + 
+  labs(title = "Seasonally Adjusted: Sales of Product A", subtitle = "Added outlier", 
+       x = "Time, Year-Count", y = "Sales") + 
+  scale_y_continuous(labels = scales::dollar_format(scale = 1, suffix = "K")) +
+  theme(legend.title = element_blank(), legend.position = "top")
+```
+
+The outlier appears to have a greater effect on the trend than the seasonality of the time series, which can be seen in its decomposition. Moreover, it caused the spike in the seasonally adjusted data. Because seasonality is uniform for each year, one outlier has a relatively small effect on it. 
+
+f. Does it make any difference if the outlier is near the end rather than in the middle of the time series?  
+
+```{r fig.width = 10}
+# Middle outlier
+plastics.mid = plastics
+plastics.mid[25] = plastics.mid[25] + 525
+plastics.mid.decomp = plastics.mid %>% decompose(type = "multiplicative") 
+
+# End outlier
+plastics.end = plastics
+plastics.end[55] = plastics.end[55] - 525
+plastics.end.decomp = plastics.end %>% decompose(type = "multiplicative") 
+
+# Plots of Time series
+p1 = plastics.mid.decomp %>% autoplot() + 
+  labs(title = "Classical Multiplicative Decomposition", subtitle = "Added middle outlier",
+       x = "Time, Year-Count") 
+
+p2 = autoplot(plastics.mid, series = "Plastics") +
+  autolayer(seasadj(plastics.mid.decomp), series = "Seasonally Adjusted") +
+  labs(title = "Seasonally Adjusted: Sales of Product A", subtitle = "Added middle outlier", 
+       x = "Time, Year-Count", y = "Sales") + 
+  scale_y_continuous(labels = scales::dollar_format(scale = 1, suffix = "K")) +
+  theme(legend.title = element_blank(), legend.position = "top")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+
+p1 = plastics.end.decomp %>% autoplot() + 
+  labs(title = "Classical Multiplicative Decomposition", subtitle = "Added middle outlier", 
+       x = "Time, Year-Count") 
+
+p2 = autoplot(plastics.end, series = "Plastics") +
+  autolayer(seasadj(plastics.end.decomp), series = "Seasonally Adjusted") +
+  labs(title = "Seasonally Adjusted: Sales of Product A", subtitle = "Added middle outlier", 
+       x = "Time, Year-Count", y = "Sales") + 
+  scale_y_continuous(labels = scales::dollar_format(scale = 1, suffix = "K")) +
+  theme(legend.title = element_blank(), legend.position = "top")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+```
+
+Comparing the outliers, an added 525, one placed in the middle, and the other at the end of the time series, it is apparent that no matter where it is placed there is an effect in the trend in the time series. In the decomposition, we see the individual effect on the trend in the middle for the outlier placed in the middle, similarly for the outlier at the end, even when the trend is already increasing. Moreover, there is a difference in the seasonality variance based on the outlier. When seasonally adjusted, the effects are also noticeable due to the large spike in the time series. Therefore, all things considered, it can be concluded that it does not seem to matter where the outlier falls, the same effect still arises within the time series.
+
+### Exercise 6.3  
+
+Recall your retail time series data (from Exercise 3 in Section 2.10). Decompose the series using X11. Does it reveal any outliers, or unusual features that you had not noticed previously?
+
+```{r}
+retaildata = readxl::read_excel("retail.xlsx", skip = 1)
+myts = ts(retaildata[, 13], frequency = 12, start = c(1982,4))
+
+myts %>% seas(x11="") %>% autoplot() +
+  labs(title = "New South Wales - Department Stores", subtitle = "X11 Decomposition", 
+       x = "Year")
+```
+
+While the X-11 decomposition shows that the trend and seasonality remain consistent from the past analysis, this decomposition reveals that there are noticeable spikes in the remainder. The unusually large spikes are seen from the earlier years, and then two larger spikes are seen within the year 2000. This is interesting to observe because the original techniques didn't suggest anything of irregular influences. Thus, from this decomposition, it was further learned that while there is a seasonality of 1 year and an upward trend, there are random, irregular influences within the time series.
+
+### Extra Credit 
+
+The time series, `cangas`, contains monthly Canadian gas production in billions of cubic metres, from January 1960 - February 2005. It was determined the Box-Cox transformation is unhelpful for the `cangas` data because there is no apparent stabilization of the variation. This was due to significant changes in the series. 
+
+During this week's meet-up, Change Point Detection was discussed and we were curious how it could be used to analyze the `cangas` time series. Therefore, below is my submission for the possible extra credit (or not, since I am fairly new to all of this and my interpretation might be off).
+
+The package used is called `mcp` ([website](https://lindeloev.github.io/mcp/index.html)). This package does regression with one or Multiple Change Points (MCP) between Generalized and hierarchical Linear Segments using Bayesian inference. To begin, the `cangas` time series is firstly transformed into an arbitrary time series, i.e. the dates which are recorded on the 1st of every month from January, 1960 to February, 2005 are transformed into counts of time. 
+
+```{r}
+library(mcp)
+# Make cangas an arbitrary time series
+df = data.frame(y = as.matrix(cangas), x = 1:542)
+```
+
+Next, the model will find the two change points between three segments. The plateau of segment 2 is parameterized relative to segment 1, i.e., modeling the change in the plateau since segment 1. Likewise, the second change point (cp_2) is now the distance from cp_1. Moreover, some of the default priors are overwritten. It is evident from the autoplot that the first change point has to be somewhere between time points 160 - 180, but the time change point is quite difficult to pin by just visual inspection.
+
+```{r}
+set.seed(525)
+model = list(
+  y ~ 1 + x,      # segment 1: intercept + slope
+  ~ rel(1),       # segment 2: plateau 
+  rel(1) ~ 0 + x  # segment 3: joined slope
+  )  
+prior = list(cp_1 = "dunif(160, 180)")
+fit_mcp = mcp(model, data = df, prior, adapt = 500)
+
+summary(fit_mcp) %>% knitr::kable(digits = 3L)
+```
+
+The summary reveals that the change points are $cp_1 = 167$ (year 1973) and $cp_2 = 288$ (year 1984). Additional, the individual parameter estimates suggest that the slopes ($x_i$) of the line segments are quite similar before and after the plateau period.
+
+```{r}
+plot(fit_mcp, q_predict = c(0.1, 0.9), geom_data = "line") + 
+  labs(title = "Canadian Gas Production", subtitle = "Regression with Multiple Change Points",
+       x = "Time, Month-Count", y = expression(paste("Billion, m"^3))) +
+  geom_vline(xintercept = 167, color = "blue") + geom_vline(xintercept = 288, color = "blue") +
+  annotate("text", x = 140, y = 11.5, label = expression(paste(cp[1],"=167"))) +
+  annotate("text", x = 260, y = 11.5, label = expression(paste(cp[2],"=288"))) 
+```
+
+The plot above reveals the fit for the time series. The gray lines are random draws from the fit, showing that it captures the trend, while the blue curve is the estimated change point location, and green dashed lines is the 80% prediction interval. As usual, further test hypotheses and model comparisons can then be conducted.
