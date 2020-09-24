@@ -1,0 +1,202 @@
+---
+title: ' CUNY MSDS DATA 624 HW #4'
+author: "Samantha Deokinanan"
+date: "September 27, 2020"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: pygments
+---
+
+*Textbook: Max Kuhn and Kjell Johnson. Applied Predictive Modeling. Springer, New York, 2013.*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = 'center', message = FALSE, warning = FALSE)
+```
+
+```{r}
+# Required R packages
+library(mlbench)
+library(tidyverse)
+library(GGally)
+library(caret)
+library(VIM)
+```
+
+### Exercise 3.1 
+
+The [UC Irvine Machine Learning Repository](http://archive.ics.uci.edu/ml/index.html) contains a data set related to glass identification. The data consist of 214 glass samples labeled as one of seven class categories. There are nine predictors, including the refractive index and percentages of eight elements: Na, Mg, Al, Si, K, Ca, Ba, and Fe.
+
+The data can be accessed via:
+
+```{r}
+data(Glass)
+str(Glass)
+```
+
+(a) Using visualizations, explore the predictor variables to understand their distributions as well as the relationships between predictors.
+
+```{r, fig.height=7,fig.width=8}
+par(mfrow = c(3,3))
+for (i in 1:9){
+  rcompanion::plotNormalDensity(
+    Glass[,i], main = sprintf("Density of %s", names(Glass)[i]), 
+    xlab = sprintf("skewness = %1.2f", psych::describe(Glass)[i,11]), 
+    col2 = "steelblue2", col3 = "royalblue4") 
+}
+```
+
+The plots above represent a density plot for a vector of values and a superimposed normal curve with the same mean and standard deviation. The plot can be used to quickly compare the distribution of data to a normal distribution. It is evident that no variables are truly normally distributed. While Na, Al, and Si are nearly normal, there is a small deviation in the tails. The refractive index, Mg, and K show evidence of bimodal distribution, while Ca, Ba, Fe, as well as K, are positively skewed.
+
+```{r fig.height=7,fig.width=8}
+ggpairs(Glass[1:9], title = "Correlogram with the variables", progress = FALSE, 
+        lower = list(continuous = wrap("smooth", alpha = 0.3, size = 0.1))) 
+```
+
+From the correlogram, the relationship between the refractive index and Ca suggests that is a highly positive correlation. There are some variables with moderate correlations, but no other relationship seems noteworthy.
+
+(b) Do there appear to be any outliers in the data? Are any predictors skewed?
+
+```{r fig.height=8,fig.width=8}
+par(mfrow = c(5,2))
+for (i in 1:9){
+  boxplot(
+    Glass[i], main = sprintf("%s", names(Glass)[i]), col = "steelblue2", horizontal = TRUE, 
+    xlab = sprintf("skewness = %1.2f      # of outliers = %d", psych::describe(Glass)[i,11], 
+                   length(boxplot(Glass[i], plot = FALSE)$out)))
+}
+```
+
+The boxplots reveal that there are a number of outliers within each variable and that they may be the likely cause for the skewness of their distribution as discussed previously. It is interesting to see that while Mg does not appear to have any outliers, the distribution is slight, negatively skewed.  Ba and Ca appears to have more outliers that may influence modeling.
+
+(c) Are there any relevant transformations of one or more predictors that might improve the classification model?
+
+Because there are quite a few variables that are affected by skewness, Box-cox transformation is one important method that can improve the model. Moreover, there are no missing values, so imputation is not necessary. Lastly, because there were some correlations, data reduction is considered to analyze if the data by generating a smaller set of predictors can capture a majority of the information in the original variables. As a result, a series of transformations to multiple variables is done, namely, Box-cox transformation and PCA. 
+
+```{r fig.height=8,fig.width=8}
+glass.t = preProcess(Glass, method = c("BoxCox", "pca"))
+glass.t
+```
+
+The pre-processing transformation that can be applied to all the variables. Refractive index, Na, Al, Si, and Ca were box-cox transformed, followed by centering, scaling and PCA, along with all other variables. After applying the transformation, the density is nearly normal and not heavily skewed, and there is no correlation among the data.
+
+```{r fig.height=7,fig.width=8}
+transformed = predict(glass.t, Glass)
+
+par(mfrow = c(3,3))
+for (i in 2:8){
+  rcompanion::plotNormalDensity(
+    transformed[,i], main = sprintf("Density of %s", names(transformed)[i]), 
+    xlab = sprintf("skewness = %1.2f", psych::describe(transformed)[i,11]), 
+    col2 = "steelblue2", col3 = "royalblue4") 
+}
+
+ggpairs(transformed[2:8], title = "Correlogram with the PCA variables", progress = FALSE, 
+        lower = list(continuous = wrap("smooth", alpha = 0.3, size = 0.1))) 
+```
+
+### Exercise 3.2   
+
+The soybean data can also be found at the UC Irvine Machine Learning Repository. Data were collected to predict disease in 683 soybeans. The 35 predictors are mostly categorical and include information on the environmental conditions (e.g., temperature, precipitation) and plant conditions (e.g., left spots, mold growth). The outcome labels consist of 19 distinct classes.
+
+The data can be loaded via:
+
+```{r}
+data(Soybean)
+```
+
+(a) Investigate the frequency distributions for the categorical predictors. Are any of the distributions degenerate in the ways discussed earlier in this chapter?
+
+There are 19 classes, only the first 15 of which have been used in prior work. The folklore seems to be that the last four classes are unjustified by the data since they have so few examples. There are 35 categorical attributes, some nominal and some ordered. The value `dna` means does not apply. The values for attributes are encoded numerically, with the first value encoded as “0,” the second as “1,” and so forth.
+
+A data frame with 683 observations on 36 variables. There are 35 categorical attributes, all numerical and a nominal denoting the class.
+
+```{r}
+summarytools::dfSummary(Soybean, plain.ascii = TRUE, style = "grid", graph.col = FALSE, footnote = NA)
+```
+
+A random variable, `X`, is degenerate if, for some a constant, `c`, `P(X = c) = 1`. These near-zero variance predictors may have a single value for the vast majority of the samples. The rule of thumb for detecting near-zero variance predictors is:
+
+* The fraction of unique values over the sample size is low (say 10%).
+* The ratio of the frequency of the most prevalent value to the frequency of the second most prevalent value is large (say around 20).
+
+If both of these criteria are true and the model in question is susceptible to this type of predictor, it may be advantageous to remove the variable from the model. Therefore, from the above table, there are a few questionable variables that may be degenerate. For criteria #1, a low sample size, these include `leaf.malf`, `leaf.mild`, `lodging`, `mycelium`, `sclerotia`, `int.discolor`, `mold.growth`, `seed.discolor`, `seed.size`, and `shriveling`. Let's further determine which of these can be removed as predictors.
+
+```{r}
+df = distinct(Soybean)
+variables = c("leaf.malf", "lodging", "mycelium", "sclerotia",  "mold.growth", "seed.discolor", "seed.size", 
+              "shriveling", "leaf.mild", "int.discolor")
+counts = data.frame()
+for (i in variables) {
+  counts = rbind(counts, as.data.frame(table(df[i])))
+}
+ratio = c()
+for (i in seq(1, 16, by = 2)) {
+  ratio[i] = counts$Freq[i]/counts$Freq[i+1]
+}
+for (i in c(17,20)) {
+  ratio[i] = counts$Freq[i]/counts$Freq[i+1]
+  ratio[i+1] = counts$Freq[i]/counts$Freq[i+2]
+  ratio[22] = NA
+}
+decision = c()
+for (i in 1:22) {
+  if (is.na(ratio[i])){
+    decision[i] = ""
+  } else if (ratio[i] > 20) {
+    decision[i] = "Remove"
+  } else {
+    decision[i] = "Keep"
+  }
+}
+variables = c("leaf.malf","", "lodging","","mycelium","", "sclerotia","", "mold.growth", "","seed.discolor",
+              "", "seed.size","", "shriveling","", "leaf.mild","","", "int.discolor","","")
+options(knitr.kable.NA = '')
+cbind(variables, rename(counts, factors = Var1, freq = Freq), ratio, decision) %>% 
+  knitr::kable(digits = 2L, caption = "Near-zero Variance Predictors")
+```
+
+From the investigation above, it is indicative that `mycelium`, `sclerotia`, and `leaf.mild` are strongly imbalanced. Thus, it is advantageous to remove these variables from the model. Note that `int.discolor`, resulted in both a keep and remove for each factor, given that we can keep one factor, the variable is kept unless there is another indication that is affecting the model.
+
+(b) Roughly 18% of the data are missing. Are there particular predictors that are more likely to be missing? Is the pattern of missing data related to the classes?
+
+```{r}
+Soybean[which(!complete.cases(Soybean)),] %>% 
+  group_by(Class) %>%  summarise(Count = n()) %>%
+  mutate(Proportion = (Count/nrow(Soybean))) %>%
+  arrange(desc(Count)) %>% 
+  knitr::kable(digits = 3L, caption = "Proportion of Incomplete Cases by Class")
+```
+
+Looking within the `Class` variables, it appears that nearly 10% of the missing data is the `phytophthora-rot` class. So we dive further into the proportion of missing data within each variable below.
+
+```{r fig.height=6,fig.width=8}
+na.counts = as.data.frame(((sapply(Soybean, function(x) sum(is.na(x))))/nrow(Soybean))*100)
+names(na.counts) = "counts"
+na.counts = cbind(variables = rownames(na.counts), data.frame(na.counts, row.names = NULL))
+
+na.counts %>% arrange(counts) %>% mutate(name = factor(variables, levels = variables)) %>%
+  ggplot(aes(x = name, y = counts)) + geom_segment( aes(xend = name, yend = 0)) +
+  geom_point(size = 4, color = "steelblue2") + coord_flip() + theme_bw() +
+  labs(title = "Proportion of Missing Data", x = "Variables", y = "% of Missing data") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1))
+```
+```{r}
+aggr(Soybean, col = c('steelblue2','royalblue4'), numbers = FALSE, sortVars = TRUE, 
+     oma = c(6,4,3,2), labels = names(Soybean), cex.axis = 0.8, gap = 3, axes = TRUE, bars = FALSE, 
+     combined = TRUE, Prop = TRUE, ylab = c("Combination of Missing Data"))
+```
+
+The graphs above are very helpful in indicating the amount of missing data the `Soybean` data contains. From the first plot, it highlights `lodging`, `hail`, `sever` and `seed.tmt` accounts for nearly 18% each. The second plot shows the pattern of the missing data as it relates to the other variables. It shows 82% are complete, in addition to the `Class` and `leaves` variables. There are quite a few missingness patterns, but their overall proportion is not extreme. For example, from the graph, the first set of variables, from `hail` to `fruit.pods`, accounts for 8% of the missing data when the other variables are complete, note this does not indicate within variable missingness. Therefore, for some imputation methods, such as certain types of multiple imputations, having fewer missingness patterns is helpful, as it requires fitting fewer models.
+
+(c) Develop a strategy for handling missing data, either by eliminating predictors or imputation.
+
+From Part A, `mycelium`, `sclerotia`, and `leaf.mild` are strongly imbalanced and it was deemed advantageous to remove these variables from the model. If the data set is large enough, rows with missing values can be deleted. However, because these proportions are not too extreme for most of the variables, the imputation by k-Nearest Neighbor is conducted. The distance computation for defining the nearest neighbors is based on Gower distance (Gower 1971), which can now handle distance variables of the type binary, categorical, ordered, continuous and semi-continuous. As a result, the data set is now complete.
+
+```{r}
+Soybean.complete = Soybean %>% select(-c(mycelium, sclerotia, leaf.mild)) %>% kNN()
+aggr(Soybean.complete, col = c('steelblue2','royalblue4'), numbers = FALSE, sortVars = FALSE, 
+     oma = c(8,4,3,2), labels = names(Soybean.complete), cex.axis = 0.8, gap = 3, axes = TRUE, 
+     bars = FALSE, combined = TRUE, Prop = TRUE, ylab = c("Combination of Missing Data"))
+```
+
