@@ -28,7 +28,7 @@ Figure 8.31 shows the ACFs for 36 random numbers, 360 random numbers, and 1,000 
 a. Explain the differences among these figures. Do they all indicate that the data are white noise?
 
 <center>
-![Picture 1](C:/Users/Deokinanan/Desktop/2019 -2021 CUNY SPS/FALL 2020/DATA 624/WEEK 7 - 8/pic1.png)
+![Picture 1](C:/Users/Deokinanan/Desktop/2019 -2021 CUNY SPS/FALL 2020/DATA 624/DONE/WEEK 7 - 8/pic1.png)
 </center>
 
 The difference among these figures is because as sample size increases (i.e. from 36 $\rightarrow$ 360 $\rightarrow$ 1000 random numbers), the autocorrelations approach zero. As depicted, the ACF bars of the data with the smallest number of samples are the tallest than the ACF with a larger number of samples. For white noise series, each autocorrelation is expected to be close to zero. If one or more large spikes are outside these bounds, or if substantially more than 5% of spikes are outside these bounds, then the series is probably not white noise. Thus based on this, all three figures are of white noise.
@@ -107,7 +107,7 @@ ggtsdisplay(usgdp, main = "Quarterly US GDP", ylab = "GDP", xlab = "Year")
 bct(usgdp, title = "Quarterly US GDP")
 ```
 
-It is evident that this time series has an upward trend, as depicted in the time series. This confirms that it is a non-stationary time series. The plot above fits with a transformation of $lambda=0.37$, and it is apparent that the curvature of the graph was reduced. Thus, a unit root test was conducted to determine more objectively whether differencing is required. The results suggest that for time series to be made stationary, the number of differences required is 1. 
+It is evident that this time series has an upward trend, as depicted in the time series. This confirms that it is a non-stationary time series. The plot above fits with a transformation of $lambda=0.37$, and it is apparent that the curvature of the graph was reduced. Thus, a unit root test was conducted and the results suggest that for time series to be made stationary, the number of differences required is 1. 
 
 ```{r}
 tst = BoxCox(usgdp, BoxCox.lambda(usgdp)) 
@@ -115,7 +115,7 @@ sprintf("The number of differences required for time series to be made stationar
         ndiffs(tst, test = "kpss"))
 ```
 
-The test statistic is smaller than the 1% critical value, and well within the range expected for stationary data. Thus, the differencing of the Box-Cox transformed data is stationary. 
+With the test statistic being smaller than the 1% critical value, the differencing of the Box-Cox transformed data is now stationary. 
 
 ```{r}
 tst %>% diff(differences = 1) %>% ur.kpss() %>% summary()
@@ -131,7 +131,7 @@ ggtsdisplay(mcopper, main = "Monthly Copper Prices", ylab = "Price", xlab = "Yea
 bct(mcopper, title = "Monthly Copper Prices")
 ```
 
-This time series has a slight seasonality variation, as depicted in the time series. There are also periods of both upward and downward trends over the years. This confirms that it is a non-stationary time series. The plot above fits with a transformation of $\lambda=0.19$, and the transformation allowed seasonal variation to be more observably stable. Thus, a unit root test was conducted to determine more objectively whether differencing is required. The results suggest that for time series to be made stationary, the number of differences required is 1. 
+This time series has a slight seasonality variation, as depicted in the time series. There are also periods of both upward and downward trends over the years. This confirms that it is a non-stationary time series. The plot above fits with a transformation of $\lambda=0.19$, and the transformation allowed seasonal variation to be more observably stable. The `ndiff` suggest that for time series to be made stationary, the number of differences required is 1. 
 
 ```{r}
 tst = BoxCox(mcopper, BoxCox.lambda(mcopper)) 
@@ -139,7 +139,7 @@ sprintf("The number of differences required for time series to be made stationar
         ndiffs(tst, test = "kpss"))
 ```
 
-The data can be seen to be stationary after 1964. The test statistic is also smaller than the 1% critical value, and well within the range expected for stationary data. Thus, the differencing of the Box-Cox transformed data is stationary. 
+The data can be seen to be stationary after 1964. The test statistic is also smaller than the 1% critical value, making this transformed data stationary. 
 
 ```{r}
 tst %>% diff(differences = 1) %>% ur.kpss() %>% summary()
@@ -155,7 +155,7 @@ ggtsdisplay(enplanements, main = "Monthly US Domestic Enplanements", ylab = "$Mi
 bct(enplanements, title = "Monthly US Domestic Enplanements")
 ```
 
-This time series has seasonality variation and an upward trend, as depicted in the time series. There is an unusually large drop in the series in the year 2002. Nonetheless, it can be stated that it is a non-stationary time series. The plot above fits with a transformation of $\lambda=-0.23$, and this transformation was also able to stabilize the variation in the data. Thus, a unit root test was conducted to determine more objectively whether differencing is required. The results suggest that for time series to be made stationary, the number of differences required is 1. 
+This time series has seasonality variation and an upward trend, as depicted in the time series. There is an unusually large drop in the series in the year 2002. Nonetheless, it can be stated that it is a non-stationary time series. The plot above fits with a transformation of $\lambda=-0.23$, and this transformation was also able to stabilize the variation in the data. Furthermore, the results suggest that for time series to be made stationary, the number of differences required is 1. 
 
 ```{r}
 tst = BoxCox(enplanements, BoxCox.lambda(enplanements)) 
@@ -163,7 +163,7 @@ sprintf("The number of differences required for time series to be made stationar
         ndiffs(tst, test = "kpss"))
 ```
 
-With some seasonality, first, a seasonal difference is done, followed by an additional difference. The plots reveal that most of the autocorrelations are within the 95% limit. The test statistic is also smaller than the 1% critical value, and well within the range expected for stationary data. Note that the unusual drop in 2002 is still present when the time series is differenced. It can be concluded that the differencing of the Box-Cox transformed data is stationary. 
+With some seasonality, first, a seasonal difference is done, followed by an additional difference. The plots reveal that most of the autocorrelations are within the 95% limit. The test statistic is also smaller than the 1% critical value, and well within the range expected for stationary data. Note that the unusual drop in 2002 is still present when the time series is differenced. It can be concluded that the differencing of the Box-Cox transformed data made it stationary. 
 
 ```{r}
 newts = tst %>% diff(lag = 12) %>% diff(difference = 1) 
@@ -181,7 +181,7 @@ ggtsdisplay(visitors, main = "Monthly Australian Short-Term Overseas Vistors", y
 bct(visitors, title = "Monthly Australian Short-Term Overseas Vistors")
 ```
 
-This time series has seasonality variation and an upward trend, as depicted in the time series. Thus, it is a non-stationary time series. The plot above fits with a transformation of $\lambda=0.28$, and this transformation was also able to stabilize the variation in the data. Thus, a unit root test was conducted to determine more objectively whether differencing is required. The results suggest that for time series to be made stationary, the number of differences required is 1. 
+This time series has seasonality variation and an upward trend, as depicted in the time series. Thus, it is a non-stationary time series. The plot above fits with a transformation of $\lambda=0.28$, and this transformation was also able to stabilize the variation in the data. The results suggest that for time series to be made stationary, the number of differences required is 1. 
 
 ```{r}
 tst = BoxCox(visitors, BoxCox.lambda(visitors)) 
@@ -189,7 +189,7 @@ sprintf("The number of differences required for time series to be made stationar
         ndiffs(tst, test = "kpss"))
 ```
 
-Because of the seasonality variation, first, a seasonal difference is done, followed by an additional difference. The plots reveal that most of the autocorrelations are within the 95% limit. The test statistic is also smaller than the 1% critical value, and well within the range expected for stationary data. It can be concluded that the differencing of the Box-Cox transformed data is stationary. 
+Because of the seasonality variation, first, a seasonal difference is done, followed by an additional difference. The plots reveal that most of the autocorrelations are within the 95% limit. The test statistic is also smaller than the 1% critical value, thus differencing made the Box-Cox transformed data stationary. 
 
 ```{r}
 newts = tst %>% diff(lag = 12) %>% diff(difference = 1) 
@@ -209,15 +209,15 @@ ggtsdisplay(myts, main = "New South Wales - Department Stores", xlab = "Year", y
 bct(myts, title = "New South Wales - Department Stores")
 ```
 
-This time series has seasonality variation and an upward trend, as depicted in the time series. Thus, it is a non-stationary time series. Moreover, the optimal Box-Cox transformation is with $\lambda=0.21$. The resulting transformation highlights the stabilization of the seasonal variability throughout the years. The plot shows how the data before 1990, with smaller variability, were stretched, while after the year 2000, with larger variability, were diminished. Thus, a unit root test was conducted to determine more objectively whether differencing is required. The results suggest that for time series to be made stationary, the number of differences required is 1. 
+This time series has seasonality variation and an upward trend, as depicted in the time series. Thus, it is a non-stationary time series. Moreover, the optimal Box-Cox transformation is with $\lambda=0.21$. The resulting transformation highlights the stabilization of the seasonal variability throughout the years. The plot shows how the data before 1990, with smaller variability, were stretched, while after the year 2000, with larger variability, were diminished. The result suggest that for time series to be made stationary, the number of differences required is 1. 
 
 ```{r}
-tst = BoxCox(visitors, BoxCox.lambda(myts)) 
+tst = BoxCox(myts, BoxCox.lambda(myts)) 
 sprintf("The number of differences required for time series to be made stationary is %0.0f.", 
         ndiffs(tst, test = "kpss"))
 ```
 
-Due to the seasonality variation, a seasonal difference is done, followed by an additional difference. The plots reveal that most of the autocorrelations are within the 95% limit. The test statistic is also smaller than the 1% critical value, and well within the range expected for stationary data. It can be concluded that the differencing of the Box-Cox transformed data is stationary. 
+Due to the seasonality variation, a seasonal difference is done, followed by an additional difference. The plots reveal that most of the autocorrelations are within the 95% limit. A unit root test and the test statistic highlighted to be smaller than the 1% critical value. Therefore, tt can be concluded that the differencing of the Box-Cox transformed data is now made stationary. 
 
 ```{r}
 newts = tst %>% diff(lag = 12) %>% diff(difference = 1) 
@@ -272,7 +272,7 @@ ma.1 = function(theta, sigma, n){
 
 d. Produce a time plot for the series. How does the plot change as you change $\theta_1$?
 
-Similar to AR(1) model, MA(1) models changes as $\theta_1$ changes: $−1<\theta_1<1$. Setting $|\theta_1|<1$, the most recent observations have higher weight than observations from the more distant past making the process is invertible. Thus, when $|\theta_1|\neq 0,y_t$ tends to oscillate around the mean and show some higher autocorrelationa, and when $\theta_1=0,y_t$ is equivalent to white noise.
+Similar to AR(1) model, MA(1) models changes as $\theta_1$ changes: $−1<\theta_1<1$. Setting $|\theta_1|<1$, the most recent observations have higher weight than observations from the more distant past making the process is invertible. Thus, when $|\theta_1|\neq 0,y_t$ tends to oscillate around the mean and show some higher autocorrelation, and when $\theta_1=0,y_t$ is equivalent to white noise.
 
 ```{r fig.width=8, fig.height=3}
 theta = c(-0.5, 0, 0.5)
@@ -305,7 +305,7 @@ gridExtra::grid.arrange(p1, acf1, ncol = 2)
 
 Because $|\phi_1| = 0.6 < 1$ and $|\theta_1| = 0.6 < 1$, this process is both stationary and invertible.
 
-f. Generate data from an AR(2) model with $\phi_1=-0.8$, $\phi_2=0.3$ and$ \sigma^2=1$. (Note that these parameters will give a non-stationary series.)
+f. Generate data from an AR(2) model with $\phi_1=-0.8$, $\phi_2=0.3$ and $\sigma^2=1$. (Note that these parameters will give a non-stationary series.)
 
 ```{r fig.width=8, fig.height=3}
 set.seed(300)
@@ -345,27 +345,25 @@ ggtsdisplay(wmurders, main = "Total Murdered Women", ylab = "per 100,000")
 
 This time series has an upward trend, both depicted in the time series and the ACF plots. Moreover, the PACF suggests that the 1st lag is nearly one, and all other PACF are white noise. This confirms that it is a non-stationary time series. Due to the lack of seasonality variation, Box-Cox transformation is not required. 
 
-A unit root test was conducted to determine more objectively whether differencing is required. The results suggest that for time series to be made stationary, the number of differences required is 2. The test statistic is much bigger than the 1% critical value, indicating that the null hypothesis is rejected. That is, the data are not stationary. 
-
 ```{r}
 sprintf("The number of differences required for time series to be made stationary is %0.0f.", 
         ndiffs(wmurders, test = "kpss"))
 ```
 
-The test statistic is also smaller than the 1% critical value, and well within the range expected for stationary data. Thus, the differencing of the Box-Cox transformed data is stationary. 
+Furthermore, a unit root test resulted in a smaller than the 1% critical value, and fell well within the range expected for stationary data. Thus, the differencing of the data has now made it stationary. 
 
 ```{r}
 wmurders %>% diff(differences = 2) %>% ur.kpss() %>% summary()
 ggtsdisplay(diff(wmurders, differences = 2), main = "Total Murdered Women", ylab = "per 100,000")
 ```
 
-Ignoring one significant spike in each plot that is just outside the limits, and not in the first few lags, the PACF plots is exponentially decaying and there is a significant spike at lag 1 in the ACF, but none beyond lag 1. This suggests p = 1. The `ndiffs` function suggested a difference of order is 2, thus d = 2. Lastly, the ACF shows a significant spike at 2, suggesting q = 2.
+Ignoring one significant spike in each plot that is just outside the limits, and not in the first few lags, the PACF plots is exponentially decaying and there is a significant spike at lag 1 in the PACF, but none beyond lag 1. This suggests p = 1. The `ndiffs` function suggested a difference of order is 2, thus d = 2. Lastly, the ACF shows a significant spike at 2, suggesting q = 2.
 
 An ARIMA(p,d,q) model is where p = order of the autoregressive part; d = degree of first differencing involved; q = order of the moving average part. Altogether, a possible model is ARIMA(1,2,2).
 
 b. Should you include a constant in the model? Explain.
 
-If c = 0 and d = 2, the long-term forecasts will follow a straight line. If c $\neq$0 and d = 2, the long-term forecasts will follow a quadratic trend. It is recommended that a quadratic or higher-order trend is dangerous for forecasting. In this case d = 2, thus a constant is will be omitted from this model.
+If c = 0 and d = 2, the long-term forecasts will follow a straight line. If c $\neq$ 0 and d = 2, the long-term forecasts will follow a quadratic trend. It is recommended that a quadratic or higher-order trend is dangerous for forecasting. In this case d = 2, thus a constant is will be omitted from this model.
 
 c. Write this model in terms of the backshift operator.
 
@@ -380,7 +378,7 @@ d. Fit the model using R and examine the residuals. Is the model satisfactory?
 checkresiduals(fit)
 ```
 
-The ACF plot of the residuals from the ARIMA(3,1,1) model shows that all autocorrelations are within the threshold limits, indicating that the residuals are behaving like white noise. The residual time plot highlights a few large positive and negative residuals after 1975, and quite at the end after 2000. Next, the histogram suggests that the residuals are not extremely skewed as the mean of the residuals is near zero. And lastly, based on the Ljung-Box test, the residuals are not distinguishable from a white noise series, $Q^∗=9.62, df=7, p−value>0.05$. 
+The ACF plot of the residuals from the ARIMA(1,2,2) model shows that all autocorrelations are within the threshold limits, indicating that the residuals are behaving like white noise. The residual time plot highlights a few large positive and negative residuals after 1975, and quite at the end after 2000. Next, the histogram suggests that the residuals are not extremely skewed as the mean of the residuals is near zero. And lastly, based on the Ljung-Box test, the residuals are not distinguishable from a white noise series, $Q^∗=9.62, df=7, p−value>0.05$. 
 
 Thus, the model is 
 
