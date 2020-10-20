@@ -1,0 +1,1326 @@
+---
+title: 'CUNY MSDS DATA 624 Project #1'
+author: "Samantha Deokinanan"
+date: "October 18, 2020"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: pygments
+    toc: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = 'center', fig.height = 5, fig.width = 8, message = FALSE, warning = FALSE)
+```
+
+### Overview
+
+This project is divided into three parts, each presenting a specific time series in which the best forecasting model is built. The parts include:
+
+* Part A – ATM Forecast
+* Part B – Forecasting Power
+* Part C – Waterflow Pipe
+
+The selection of a method depends on many factors - the context of the forecast, the relevance of the historical data given, the degree of accuracy, etc. These factors are cross-validated and examine for the potentially greater accuracy model at minimal cost.
+
+### R Packages
+
+These are the main packages used for data wrangling, visualization, and graphics. Any other minor packages for analysis will be listed when needed.
+
+```{r}
+# Required R packages
+library(tidyverse)
+library(fpp2)
+library(urca)
+library(readxl)
+library(lubridate)
+library(kableExtra)
+library(psych)
+```
+
+### Project Summary {.tabset .tabset-fade .tabset.-pills}
+
+Part A explores the common forecasting techniques, namely, Seasonal and Trend decomposition using Loess, Exponential Smoothing and ARIMA modeling. Part B goes a step further and introduces Hybrid Forecasting which produces point estimates by combining the functionality of multiple forecasting techniques. Part C transforms data into a time-base sequence and aggregate based on the hour.
+
+Each part more or less follows the work-flow shown below.
+
+<center>
+![Workflow](C:/Users/Deokinanan/Desktop/2019 -2021 CUNY SPS/FALL 2020/DATA 624/Project 1 - due 18 Oct/workflow.jpeg)
+</center>
+
+***
+
+<center> **PROJECT SECTION** </center>
+
+***
+
+#### Part A – ATM Forecast
+
+##### Exploratory Analysis
+
+The data set contains cash withdrawals from four (4) different ATMs during the period of 1 May 2009 to 30 April 2010. Once that data is separated to allow each column of the data frame to be a specific ATM, the following exploratory analysis is done.
+
+```{r}
+ATM624Data = read_excel("ATM624Data.xlsx", col_types = c("date", "text", "numeric"))
+ATM.new = ATM624Data %>% drop_na() %>% spread(ATM, Cash)
+```
+```{r echo = FALSE}
+ATM.new %>% kable(caption = "Transformed ATM dataset")  %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "200px")
+```
+
+From the few summary statistics below, each ATM appears to have some discrepancies. Firstly, for `ATM1`, there is a total record of n = 362, suggesting missing data. This is similar to `ATM2`, where n = 363. Next, `ATM3` results in a mean = 0.72 over 365 days with the range of withdrawal being \$0 to \$9,600. Moreover, with a mean absolute deviation for `ATM3` is 0, this suggests that there is no variation of the data. On the other hand, `ATM4` appears to be well-used, with a mean daily withdrawal of $47,400.
+
+```{r echo = FALSE}
+describe(ATM.new[,-1])[,-1] %>% kable(digits = 2L, caption = "Descriptive Statistics of ATM dataset") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+Lastly, with further examination of the data for `ATM3` and `ATM4`, it shows that the number of days withdrawal was made using ATM #3 is only 3 days, explaining the odd summary statistics and the number of outliers in the boxplot below. As for `ATM4`, there is one particular outlier that is beyond the typical amount of cash withdraw from that ATM.
+
+```{r echo = FALSE}
+sprintf("Number of days withdrawal were made using ATM #3 is %0.0f days.", sum(ATM.new[,4]!=0))
+sprintf("On 2010-02-09, an unexpectly high amount of $%0.2fK was withdraw from ATM #4.", max(ATM.new[,5]/10))
+```
+
+```{r}
+par(mfrow = c(1,4))
+for (i in 2:5){
+  boxplot(
+    ATM.new[i], main = sprintf("%s", names(ATM.new)[i]), col = "steelblue2",outcex = 1,
+    xlab = sprintf("# of outliers = %d", length(boxplot(ATM.new[i], plot = FALSE)$out)))
+}
+```
+
+A view of the time series plot highlights the weekly seasonality, particularly for `ATM1` and `ATM2`. The third time series plot shows the flatline until the even end of April 2010. This flatline may suggest that `ATM3` must be newly installed/replaced with data only collected from this machine at the end of April, or it was decommissioned for some time before operating once again. While with `ATM4`, the outlier is too extreme and uncommon.
+
+```{r fig.height=6, fig.width=9}
+ATM624Data %>% drop_na() %>% ggplot(aes(x = DATE, y = Cash, col = ATM)) +
+  geom_line(show.legend = FALSE) +
+  facet_wrap(~ ATM, ncol = 1, scales = "free_y") +
+  labs(title = "ATM Cash Withdrawal", subtitle ="1 May, 2009 to 30 April, 2010",
+       x = "Date") +
+  scale_y_continuous("Amount of Cash Withdrawal", labels = scales::dollar_format(scale = 0.1, suffix = "K"))
+```
+
+Based on this exploratory analysis, each ATMs exhibited different patterns and will require a few tidying and transformation techniques including missing data treatment. Moreover, forecasting should be conducted on each ATM data sets separately. Thus, the next task will be to estimate missing values and outlier replacements for each ATMs, such that for:
+
+* `ATM1` and `ATM2`, estimating missing data is done.
+* `ATM3` will receive no change due to limited data.
+* `ATM4`, there will be replacement of outlier.
+
+***
+
+##### Data Transformation
+
+The handling of missing data is done by fitting a seasonal model to the data and then interpolate the seasonally adjusted series, before re-seasonalizing. While identifying outliers and suggest reasonable replacements, residuals are identified by fitting a periodic STL decomposition for seasonal data. Residuals are deemed as outliers if they lie outside the range $\pm 2(q_{0.9} − q_{0.1})$ where $q_p$ is the p-quantile of the residuals.
+
+The general function `tsclean` from the `forecast` package combines both procedures, so it handles both missing values and outliers. It will return a cleaned version of a time series with outliers and missing values replaced by estimated values.
+
+```{r}
+temp = ts(ATM.new %>% select(-DATE))
+ATM.ts = temp
+for (i in 1:4){
+  ATM.ts[,i] = tsclean(ATM.ts[,i])
+}
+```
+
+As a result, the summary statistic shows that the missing values from `ATM1` and `ATM2` have been interpolated, and the outlier from `ATM4` was replaced.
+
+```{r}
+describe(ATM.ts)[,-1] %>%
+  kable(digits = 2L, caption = "Descriptive Statistics of ATM dataset")  %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+ATM.df = reshape2::melt(ATM.ts)
+ATM.df = cbind(DATE = seq(as.Date("2009-05-1"), as.Date("2010-04-30"), length.out = 365), ATM.df[,-1])
+names(ATM.df) = c("DATE", "ATM", "Cash")
+```
+
+Thus, below is the time series of cash withdrawal from the 4 different ATMs within the period starting 1 May 2009 to 30 April 2010. While there are not many visual differences in the new time series plot for ATM 1-3, the appearance of `ATM4` has greatly improved once the extreme outlier was replaced.
+
+```{r fig.height=6, fig.width=9}
+ATM.df %>% ggplot(aes(x = DATE, y = Cash, col = ATM)) +
+  geom_line(show.legend = FALSE) +
+  facet_wrap(~ ATM, ncol = 1, scales = "free_y") +
+  labs(title = "ATM Cash Withdrawal", subtitle ="1 May, 2009 to 30 April, 2010",
+       x = "Date") +
+  scale_y_continuous("Amount of Cash Withdrawal", labels = scales::dollar_format(scale = 0.1, suffix = "K"))
+```
+
+```{r eval = FALSE}
+library(gganimate)
+ts = ggplot(ATM.df, aes(x = DATE, y = Cash, group = ATM, color = ATM)) +
+  geom_line() + geom_point() +
+  labs(title = "ATM Cash Withdrawal", subtitle ="1 May, 2009 to 30 April, 2010",
+       x = "Date") +
+  scale_y_continuous("Amount of Cash Withdrawal",
+                     labels = scales::dollar_format(scale = 0.1, suffix = "K")) +
+  theme_minimal() + transition_reveal(DATE)
+
+animate(ts, height = 6, width = 9, units = "in", res = 150)
+anim_save("atm.gif")
+```
+
+<center>
+![Picture 1](C:/Users/Deokinanan/Desktop/2019 -2021 CUNY SPS/FALL 2020/DATA 624/Project 1 - due 18 Oct/atm.gif)
+</center>
+
+By zooming in and observing the series for a few weeks, there are distinct dips for each of the ATMs. With a month, there are four dips, further emphasizing the weekly seasonality.
+
+```{r eval = FALSE}
+df = with(ATM.df, ATM.df[(DATE >= "2009-07-01" & DATE <= "2009-08-31"), ])
+ts = ggplot(df, aes(x = DATE, y = Cash, group = ATM, color = ATM)) +
+  geom_line() + geom_point() +
+  labs(title = "ATM Cash Withdrawal", subtitle ="1 July, 2009 to 31 August, 2009",
+       x = "Date") +
+  scale_y_continuous("Amount of Cash Withdrawal",
+                     labels = scales::dollar_format(scale = 0.1, suffix = "K")) +
+  theme_minimal() + transition_reveal(DATE)
+
+animate(ts, height = 6, width = 9, units = "in", res = 150)
+anim_save("atm_zoom.gif")
+```
+
+
+<center>
+![Picture 1](C:/Users/Deokinanan/Desktop/2019 -2021 CUNY SPS/FALL 2020/DATA 624/Project 1 - due 18 Oct/atm_zoom.gif)
+</center>
+
+***
+
+##### Time Series Features
+
+In the previous sections, the data itself was examined and prep to prevent bias and errors in the forecast. And so, this section will now dive into the time series themselves to examine their characteristics and determine the best modeling technique to forecast future cash withdrawal amount per ATM.
+
+```{r}
+# Transform the dataframe into a time series
+temp = ATM.df %>% drop_na() %>% spread(ATM, Cash)
+ATM.ts = ts(temp %>% select(-DATE), frequency = 7)
+```
+
+***
+
+###### **ATM 1**
+
+From the time series plot, it is evident that there is seasonality in this set, weekly as previously established. While there is no steady trend over the weeks, there are increasing and decreasing activities over periods. For instance, there is a downwards trend from week 22 to 27. Moreover, the subseries plot highlight that Tuesday tends to have the highest mean of cash withdrawal while Saturday is the lowest. The ACF highlights that the slow decrease in every 7th lags due to the trend. Expanding the lags longer, the autocorrelations are in a "scalloped" shape, further confirming that there is seasonality. From the partial autocorrelation (PACF), there a few significant lags in the beginning, while all other PACF are within the critical limit, suggesting all other lags are autocorrelation. Altogether, the time series plots for `ATM1` confirm that it is non-stationary, shows seasonality, and slight trend variations, and will require differencing in the lags to be made into a stationary time series.
+
+```{r}
+ggtsdisplay(ATM.ts[,1], main = "ATM #1 Cash Withdrawal", ylab = "Cash Withdrawal (in hundreds)", xlab = "Week")
+
+ggsubseriesplot(ATM.ts[,1]) +
+  labs(title = "ATM #1 Cash Withdrawal", subtitle ="1 May, 2009 to 30 April, 2010",
+       x = "Days of the Week") +
+  scale_y_continuous("Amount of Cash Withdrawal",
+                     labels = scales::dollar_format(scale = 0.1, suffix = "K"))
+```
+
+For this time series subset, it was deemed helpful that the stabilization of the seasonal variability throughout the year may be necessary. Using Box-Cox transformation, the optimal $\lambda=0.26$. The resulting transformation highlights that the smaller variability was stretched, while the larger variability was diminished.
+
+```{r}
+bct = function(ts, title){
+  a = autoplot(ts) +
+    labs(title = sprintf("Before: %s", title), x = "Week") +
+    scale_y_continuous("Amount of Cash Withdrawal",
+                     labels = scales::dollar_format(scale = 0.1, suffix = "K"))
+  lambda = BoxCox.lambda(ts)
+  at = autoplot(BoxCox(ts, lambda)) +
+    labs(title = sprintf("Transformed: %s", title),
+         subtitle = sprintf("lambda = %0.2f", lambda),
+         y = "Box-Cox Transformed",
+         x = "Week")
+  gridExtra::grid.arrange(a, at)
+}
+lambda = BoxCox.lambda(ATM.ts[,1])
+bct(ATM.ts[,1], title = "ATM #1 Cash Withdrawal")
+```
+
+At this moment, applying a decomposition to `ATM1` is useful to further study time series data, and exploring historical changes over time. The decomposition of the time series into seasonal, trend and irregular components is done using loess, or the STL decomposition.
+
+```{r}
+ATM.ts[,1] %>% stl(s.window = 7, robust = TRUE) %>%
+  autoplot()  +
+  labs(title = "Seasonal & Trend Decomposition for ATM #1 Time Series", x = "Week")
+```
+
+The decomposition highlights the seasonality component changes drastically from week 36 to week 43. The panel bars indicate that the variation attributed to the trend is much smaller than the seasonal component and consequently only a small part of the variation in the data series.
+
+By considering variations in the combinations of the trend and seasonal components, exponential smoothing methods are not ruled out as a tool for forecasting. This technique will determine a possible model based on the best values in the AICc. It shows that the ETS(A, N, A) model best fits the data for the transformed `ATM1`, i.e. exponential smoothing with additive error, no trend component, and additive seasonality.
+
+```{r}
+ATM.ts[,1] %>% ets(lambda = lambda, biasadj = TRUE)
+```
+
+Note that the Box-Cox transformations were kept because it helped to stabilize the variance of a time series. Differencing can help stabilize the mean of a time series by removing changes in the level of a time series, and therefore reducing trend and seasonality.
+
+```{r echo = FALSE}
+tst = ATM.ts[,1] %>% BoxCox(lambda)
+sprintf("And so, the number of differences required for time series to be made stationary is %0.0f.",
+        ndiffs(tst, test = "kpss"))
+sprintf("While, the number of differences required for time series to be made seasonally stationary is %0.0f.",
+        nsdiffs(tst, test = "seas"))
+```
+
+ARIMA models are capable of modeling a wide range of seasonal and non-seasonal data. The data is non-stationary, with seasonality, so there will be a seasonal difference, D = 1. These also appear to be non-stationary, but differencing is not need due to the transformed data, d = 0. The unit root test resulted in a smaller than the 1% critical value and fell well within the range expected for stationary data. Thus, the differencing of the data has now made it stationary.
+
+```{r}
+tst %>% diff(lag = 7) %>% ur.kpss() %>% summary()
+ggtsdisplay(diff(tst, lag = 7),
+            main = "ATM #1 Cash Withdrawal",
+            ylab = "Cash Withdrawal",
+            xlab = "Week")
+```
+
+The aim now is to find an appropriate ARIMA model based on the ACF and PACF. Ignoring one significant spike in each plot that is just outside the limits, and not in the first few lags, the ACF plot is sinusoidal decaying. From the non-seasonal component of the ACF, there are small significant spikes at lag 1 and 6, and a larger one at lag 7. While with the seasonal component, there are none beyond lag 7. This suggests q > 1 and Q = 1. The PACF plot is also sinusoidal decaying, but there is no change in the non-seasonal and seasonal components when multiple differencing was performed. This could suggest that p = 0, and P = 0.
+
+An $ARIMA(p, d, q)(P, D, Q)_m$ model is where p/P = order of the autoregressive part, d/D = degree of first differencing involved, q/Q = order of the moving average part, and m = number of observations. Altogether, possible models should have the sequence similar to ARIMA(0,0,>1)(0,1,1)[7].
+
+To confirm, the `auto.arima()` function to determine are all determined by minimizing the information criteria. The suggested model is ARIMA(0,0,2)(0,1,1)[7], which will be used since the deduction by observation was very close.
+
+```{r}
+ATM.ts[,1] %>% auto.arima(lambda = lambda, biasadj = TRUE)
+```
+
+Therefore, the proposed models that might be suitable for fitting `ATM1` include:
+
+Technique | Proposed Model
+----------|----------
+Forecasting with Decomposition | STL Decomposition
+Forecasting with Exponential Smoothing | ETS(A, N, A)
+Forecasting with ARIMA | ARIMA(0,0,2)(0,1,1)[7]
+
+***
+
+###### **ATM 2**
+
+From the time series plot, it is evident that there is seasonality in this set, weekly as previously established. However, in this case, there is no steady trend over the year. Moreover, the subseries plot highlight that Sunday tends to have the highest mean of cash withdrawal while Saturday is the lowest. The expansion of ACF lags highlights that the autocorrelations are in a "scalloped" shape, further confirming that there is seasonality. From the partial autocorrelation (PACF), there a few significant lags in the beginning, while all other PACF are within the critical limit. Altogether, the time series plots for `ATM2` confirms that it is non-stationary, has seasonality variation, but no trends and will require differencing in the lags to be made into a stationary time series.
+
+```{r}
+ggtsdisplay(ATM.ts[,2], main = "ATM #2 Cash Withdrawal", ylab = "Cash Withdrawal (in hundreds)", xlab = "Week")
+
+ggsubseriesplot(ATM.ts[,2]) +
+  labs(title = "ATM #2 Cash Withdrawal", subtitle ="1 May, 2009 to 30 April, 2010",
+       x = "Days of the Week") +
+  scale_y_continuous("Amount of Cash Withdrawal",
+                     labels = scales::dollar_format(scale = 0.1, suffix = "K"))
+```
+
+For this time series subset, it was considered helpful that the stabilization of the seasonal variability throughout the year may be necessary. Using Box-Cox transformation, the optimal $\lambda=0.72$. The resulting transformation highlights that there are still two peculiar spikes that are large even after transformation.
+
+```{r}
+lambda = BoxCox.lambda(ATM.ts[,2])
+bct(ATM.ts[,2], title = "ATM #2 Cash Withdrawal")
+```
+
+At this moment, applying a decomposition to `ATM2` is useful to further study time series data, and exploring historical changes over time. The decomposition of the transformed time series is done using STL decomposition.
+
+```{r}
+ATM.ts[,2] %>% stl(s.window = 7, robust = TRUE) %>%
+  autoplot()  +
+  labs(title = "Seasonal & Trend Decomposition for ATM #2 Time Series", x = "Week")
+```
+
+The decomposition highlights the seasonality component changes drastically from week 40 to week 43, quite similar to `ATM1`. The panel bar indicates the trend is much smaller than the seasonal component and consequently only a very small part of the variation in the data series, so it was not considered to be influential.
+
+By considering variations in the seasonal components, exponential smoothing methods are not ruled out as a tool for forecasting. This technique will determine a possible model based on the best values in the information criterion. It shows that the ETS(A, N, A) model best fits the data for the `ATM2`, i.e. exponential smoothing with additive error, no trend component, and additive seasonality.
+
+```{r}
+ATM.ts[,2] %>% ets(lambda = lambda, biasadj = TRUE)
+```
+
+Differencing can help stabilize the mean of a time series by removing changes in the level of a time series, and therefore reducing seasonality.
+
+```{r echo = FALSE}
+tst = ATM.ts[,2] %>% BoxCox(lambda)
+sprintf("And so, the number of differences required for time series to be made stationary is %0.0f.",
+        ndiffs(tst, test = "kpss"))
+sprintf("While, the number of differences required for time series to be made seasonally stationary is %0.0f.",
+        nsdiffs(tst, test = "seas"))
+```
+
+ARIMA models are capable of modeling a wide range of seasonal and non-seasonal data. The data is non-stationary, with seasonality, so there will be a seasonal difference, D = 1. These also appear to be non-stationary, but differencing is not need due to the transformed data, d = 1. The unit root test resulted in a smaller than the 1% critical value and fell well within the range expected for stationary data. Thus, the differencing of the data has now made it stationary. However, manipulating the differencing, either differencing in the seasonal or non-seasonal component still resulted in the stationary data. Therefore, d and D can be either 0 or 1.
+
+```{r}
+tst %>% diff(lag = 7, difference = 1) %>% ur.kpss() %>% summary()
+ggtsdisplay(diff(tst, lag = 7),
+            main = "ATM #2 Cash Withdrawal",
+            ylab = "Cash Withdrawal",
+            xlab = "Week")
+```
+
+The aim now is to find an appropriate ARIMA model based on the ACF and PACF. Ignoring one significant spike in each plot that is just outside the limits, and not in the first few lags, both plots are sinusoidal decaying. From the first seasonal differencing component, significant lags were ending along with lag 3, and no change after another single differencing. From the non-seasonal component of both the ACF and PACF, there are small significant spikes at lag 5, and a larger one at lag 7. This suggests (p,q) = (>2,>2) and (P,Q) = (>1,>1).
+
+An $ARIMA(p, d, q)(P, D, Q)_m$ model is where p/P = order of the autoregressive part, d/D = degree of first differencing involved, q/Q = order of the moving average part, and m = number of observations. Altogether, possible models should have the sequence similar to ARIMA(>2,[0 or 1],>2)(>1,[0 or 1],>1)[7] with drifting since (d,D) could both be 1.
+
+To confirm, the `auto.arima()` function to determine are all determined by minimizing the information criteria. The suggested model is ARIMA(3,0,3)(0,1,1)[7] with a drifting constant, which will be used since the deduction by observation was very close.
+
+```{r}
+ATM.ts[,2] %>% auto.arima(lambda = lambda, biasadj = TRUE)
+```
+
+Therefore, the proposed models that might be suitable for fitting `ATM2` include:
+
+Technique | Proposed Model
+----------|----------
+Forecasting with Decomposition | STL Decomposition
+Forecasting with Exponential Smoothing | ETS(A, N, A)
+Forecasting with ARIMA | ARIMA(3,0,3)(0,1,1)[7] with drift
+
+***
+
+###### **ATM 3**
+
+Given the very limited data, there is not enough information to make a suitable forecast model. Thus, the mean from ATM 1-3 will be used as the expected amount of cash withdraw from ATM 3. The reason being that ATM 1 & 2 have similar withdrawal activities for the same days, while ATM 4 present higher withdrawal amounts. As a result, with 2/3 of the ATMs with similar cash withdrawals as ATM 3, it is decided that the expected amount of cash withdraw from ATM 3 with being the mean of cash withdrawal from ATM 1-3.
+
+Therefore, the proposed models that might be suitable for fitting `ATM3` include:
+
+Technique | Proposed Model
+----------|----------
+Forecasting with Expected Value | at time t+1, $E[ATM_3] = \frac {\sum_{i=1}^{n} (ATM_i)}{n}$ where n = 3
+
+***
+
+###### **ATM 4**
+
+From the time series plot, it is evident that there are seasonality in this set and no steady trend over the weeks. The subseries plot highlight that Sunday tends to have the highest mean of cash withdrawal while Saturday is the lowest. The ACF highlights that the slow decrease in every 7th lags and represents the autocorrelations in a "scalloped" pattern, further confirming that there is seasonality. From the partial autocorrelation, there a few significant lags in the beginning, while all other PACF are within the critical limit. Altogether, the time series plots for `ATM4` confirm that it is non-stationary, has seasonality variation, and may require differencing in the lags to be made into a stationary time series.
+
+```{r}
+ggtsdisplay(ATM.ts[,4], main = "ATM #4 Cash Withdrawal", ylab = "Cash Withdrawal (in hundreds)", xlab = "Week")
+
+ggsubseriesplot(ATM.ts[,4]) +
+  labs(title = "ATM #4 Cash Withdrawal", subtitle ="1 May, 2009 to 30 April, 2010",
+       x = "Days of the Week") +
+  scale_y_continuous("Amount of Cash Withdrawal",
+                     labels = scales::dollar_format(scale = 0.1, suffix = "K"))
+```
+
+For this time series subset, it was helpful that the stabilization of the seasonal variability throughout the year may be necessary. Using Box-Cox transformation, the optimal $\lambda=0.45$. The resulting transformation highlights that the smaller variability was stretched, while the larger variability was diminished.
+
+```{r}
+lambda = BoxCox.lambda(ATM.ts[,4])
+bct(ATM.ts[,4], title = "ATM #4 Cash Withdrawal")
+```
+
+At this moment, applying a decomposition to `ATM4` is useful to further study time series data, and exploring historical changes over time. Decomposition is done using the STL decomposition.
+
+```{r}
+ATM.ts[,4] %>% stl(s.window = 7, robust = TRUE) %>%
+  autoplot()  +
+  labs(title = "Seasonal & Trend Decomposition for ATM #4 Time Series", x = "Week")
+```
+
+Once again, the decomposition highlights the seasonality component changes drastically from week 40 to week 43, in addition to a few earlier periods. The panel bar for trend also suggests that it is much smaller than the seasonal component and consequently only a small part of the variation in the data series.
+
+By considering variations in the combinations of the small trends and seasonal components, exponential smoothing methods are not ruled out as a tool for forecasting. This technique will determine a possible model based on the best values in the information criterion. It shows that the ETS(A, N, A) model best fits the data for the transformed `ATM4`, i.e. exponential smoothing with additive error, no trend component, and additive seasonality.
+
+```{r}
+ATM.ts[,4] %>% ets(lambda = lambda, biasadj = TRUE)
+```
+
+Note that Box-Cox transformation was kept because it helped to stabilize the variance of a time series. Differencing can help stabilize the mean of a time series by removing changes in the level of a time series, and therefore reducing trend and seasonality.
+
+```{r echo = FALSE}
+tst = ATM.ts[,4] %>% BoxCox(lambda)
+sprintf("And so, the number of differences required for time series to be made stationary is %0.0f.",
+        ndiffs(tst, test = "kpss"))
+sprintf("While, the number of differences required for time series to be made seasonally stationary is %0.0f.",
+        nsdiffs(tst, test = "seas"))
+```
+
+ARIMA models are capable of modeling a wide range of seasonal and non-seasonal data. The data is non-stationary, with no seasonal difference needed, D = 0. These also appear to be non-stationary, but differencing is not need due to the transformed data, d = 0. The unit root test resulted in a smaller than the 1% critical value and fell well within the range expected for stationary data. Thus, no differencing of the data is considered to be stationary.
+
+```{r}
+tst %>% ur.kpss() %>% summary()
+ggtsdisplay(tst,
+            main = "ATM #4 Cash Withdrawal",
+            ylab = "Cash Withdrawal",
+            xlab = "Week")
+```
+
+The aim now is to find an appropriate ARIMA model based on the ACF and PACF. Ignoring one significant spike in each plot that is just outside the limits, and not in the first few lags, once again, both the ACF and PACF plots are sinusoidal decaying. There are the only significant lags at the seasonal lags, and almost significant spikes at lag 4, indicating that some additional non-seasonal terms need to be included in the model. Lastly, there was no change in the non-seasonal and seasonal components when multiple differencing was performed. This could suggest that (p,Q) = 0, and (P,q) > 2.
+
+An $ARIMA(p, d, q)(P, D, Q)_m$ model is where p/P = order of the autoregressive part, d/D = degree of first differencing involved, q/Q = order of the moving average part, and m = number of observations. Altogether, possible models should have a sequence similar to ARIMA(0,0,>2)(>2,0,0)[7].
+
+To confirm, the `auto.arima()` function to determine are all determined by minimizing the information criteria. The suggested model is ARIMA(0,0,1)(2,0,0)[7] with a non-zero mean, which will be used since the deduction by observation was very close.
+
+```{r}
+ATM.ts[,4] %>% auto.arima(lambda = lambda, biasadj = TRUE)
+```
+
+Therefore, the proposed models that might be suitable for fitting `ATM4` include:
+
+Technique | Proposed Model
+----------|----------
+Forecasting with Decomposition | STL Decomposition
+Forecasting with Exponential Smoothing | ETS(M, N, A)
+Forecasting with ARIMA | ARIMA(0,0,1)(2,0,0)[7] with non-zero mean
+
+***
+
+##### Forecast & Model Comparison
+
+Because each model was fitted using different transformations, information criteria are not reliable for comparison since the likelihood is computed in different ways, thus cross-validation is performed by splitting the data into a training and testing set, where the root mean squared error is used to identify the best fit model. The following function will split the data set and fit each model as specified above. A performance test will then be conducted to determining the root mean squared error of the train data with the test data. The function is also capable of plotting residuals of each model once specified.
+
+```{r}
+ts_accuracy = function(i, week, rmse, residual){
+  # Split to train and test
+  train = window(ATM.ts[,i], end = c(week, 3))
+  test = window(ATM.ts[,i], start = c(week, 4))
+  # Finds optimal lambda
+  lambda = BoxCox.lambda(ATM.ts[,i])
+  # Forecast Models
+  stl.model = train %>% stl(s.window = 7, robust = TRUE)
+  ets.model = train %>% ets(model='ANA', lambda = lambda, biasadj = TRUE)
+  if (i == 1){
+  arima.model = train %>% Arima(order = c(0,0,2), seasonal = c(0,1,1),
+                                lambda = lambda, biasadj = TRUE)
+  }
+  if (i == 2){
+  arima.model = train %>% Arima(order = c(3,0,3), seasonal = c(0,1,1),
+                                include.drift = TRUE,
+                                lambda = lambda, biasadj = TRUE)
+  }
+  if (i == 4){
+  arima.model = train %>% Arima(order = c(0,0,1), seasonal = c(2,0,0),
+                                include.mean = TRUE,
+                                lambda = lambda, biasadj = TRUE)
+  }
+  # Returns Residuals Plots
+  if(tolower(residual) == 'stl'){checkresiduals(stl.model)}
+  if(tolower(residual) == 'ets'){checkresiduals(ets.model)}
+  if(tolower(residual) == 'arima'){checkresiduals(arima.model)}
+  # Forecast
+  stl.fc = forecast(stl.model, h = length(test))$mean
+  ets.fc = forecast(ets.model, h = length(test))$mean
+  arima.fc = forecast(arima.model, h = length(test))$mean
+  # Performance statistics
+  accuracy = data.frame(RMSE = cbind(accuracy(stl.fc, test)[,2],
+                                     accuracy(ets.fc, test)[,2],
+                                     accuracy(arima.fc, test)[,2]))
+  row.names(accuracy) = c(sprintf("ATM #%d", i))
+  names(accuracy) = c("STL", "ETS", "ARIMA")
+  # Returns RMSE
+  if(rmse){accuracy}
+}
+```
+
+From the table below, it is evident that the ARIMA models produced fewer errors among all the individual ATM models. While not the smallest error, it's interesting to note that for `ATM2`, both the STL decomposition and ETS(A, N, A) resulted in nearly similar RMSEs (their actual difference is merely 0.003).
+
+```{r}
+df = data.frame()
+for (i in c(1,2,4)){
+  df = rbind(df,ts_accuracy(i, 44, rmse = TRUE, residual = FALSE))
+}
+```
+```{r echo=FALSE}
+kable(df, digits = 2L, caption = "RMSE for Each Forecasting Models") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+The residuals of the best model based on the RMSE are shown below. In this collection on plots, there are a time series, ACF, and a histogram of the residuals (with an overlaid normal distribution for comparison).
+
+For `ATM1`, the ARIMA(0,0,2)(0,1,1)[7] model produced the smallest RMSE. Firstly, the residual time series plot highlights a few large negative residuals. The histogram suggests that the residuals may be left-skewed but the mean of the residuals appears to be near zero. Moreover, there is no significant autocorrelation in the residuals series, suggesting the forecasts are good. This is further confirmed based on the Ljung-Box test since the residuals are not distinguishable from a white noise series, $Q^∗=7.23, df=3, p−value>0.05$. Overall, it seems that forecasts from this method will be good.
+
+```{r}
+ts_accuracy(1, 44, rmse = FALSE, residual = 'ARIMA')
+```
+
+For `ATM2`, the ARIMA(3,0,3)(0,1,1)[7] with the drifting model produced the smallest RMSE. Firstly, the residual time series plot highlights a few large negative residuals. The histogram suggests that the mean of the residuals is near zero. Moreover, there is no significant autocorrelation in the residuals series, suggesting the forecasts are good. This is further confirmed based on the Ljung-Box test since the residuals are not distinguishable from a white noise series, $Q^∗ = 5.53, df = 8, p−value > 0.05$. Overall, it seems that forecasts from this method will be good.
+
+```{r}
+ts_accuracy(2, 44, rmse = FALSE, residual = 'ARIMA')
+```
+
+For `ATM4`, the ARIMA(0,0,1)(2,0,0)[7] with non-zero mean model produced the smallest RMSE. Firstly, the residual time series plot highlights the variability in the residuals. The histogram suggests that the residuals near-normal with the mean of the residuals being near zero. Moreover, there is no significant autocorrelation in the residuals series, suggesting the forecasts are good. This is further confirmed based on the Ljung-Box test since the residuals are not distinguishable from a white noise series, $Q^∗ = 13.22, df = 4, p−value > 0.05$. Overall, it seems that forecasts from this method will be good.
+
+```{r}
+ts_accuracy(4, 44, rmse = FALSE, residual = 'ARIMA')
+```
+
+Lastly, the following function will plot all the data in addition to the forecast based on the specified model for a visual comparison. There is also a zoomed-in plot of the forecast for clarity. The function is also capable of returning any of the forecast created by the specified model. This will be used to visually analyze the fit and officially state the final model.
+
+```{r}
+ATM.fc = function(tseries, ATM.no, plot, forecast){
+  # Finds optimal lambda
+  lambda = BoxCox.lambda(tseries)
+  # Forecast Models
+  stl.model = tseries %>% stl(s.window = 7, robust = TRUE)
+  ets.model = tseries %>% ets(lambda = lambda, biasadj = TRUE)
+  arima.model = tseries %>% auto.arima(lambda = lambda, biasadj = TRUE)
+  # Forecast
+  ATM.stl.fc = forecast(stl.model, h = 31)$mean %>% ts(start = 366, end = 396)
+  ATM.ets.fc = forecast(ets.model, h = 31)$mean %>% ts(start = 366, end = 396)
+  ATM.arima.fc = forecast(arima.model, h = 31)$mean %>% ts(start = 366, end = 396)
+  # Full forecast plot
+  p1 = autoplot(ts(tseries, frequency = 1)) +
+    autolayer(ATM.stl.fc, series = 'STL', PI = FALSE) +
+    autolayer(ATM.ets.fc, series = 'ETS', PI = FALSE) +
+    autolayer(ATM.arima.fc, series = 'ARIMA', PI = FALSE) +
+    labs(title = sprintf("ATM #%0.0f Cash Withdrawal Forecast", ATM.no),
+         subtitle = "1 May, 2009 to 31 May, 2010",
+         x = "Days") +
+    scale_y_continuous("Amount of Cash Withdrawal",
+                       labels = scales::dollar_format(scale = 0.1, suffix = "K")) +
+    guides(colour = guide_legend(title = "Models")) +
+    theme(legend.position = "top")
+  # Zoomed in plot on forecast
+  p2 = p1 + labs(title = sprintf("Zoom: ATM #%0.0f Cash Withdrawal Forecast", ATM.no),
+           subtitle = "15 April, 2010 to 31 May, 2010") +
+    xlim(c(350,396))
+  # Returns plots
+  if(plot){gridExtra::grid.arrange(p1, p2, ncol = 1)}
+  # Return Forecast Values
+  if(tolower(forecast) == 'stl'){return(ATM.stl.fc)}
+  if(tolower(forecast) == 'ets'){return(ATM.ets.fc)}
+  if(tolower(forecast) == 'arima'){return(ATM.arima.fc)}
+}
+```
+
+***
+
+###### **ATM 1**
+
+```{r fig.height=8}
+ATM1.fc = ATM.fc(ATM.ts[,1], 1, plot = TRUE, forecast = 'arima')
+```
+
+Visually, each model does a good job fitting the series. Therefore, based on the performance metrics, the best fit model for ATM #1 is the ARIMA(0,0,2)(0,1,1)[7] with Box-Cox Transformation of 0.26.
+
+***
+
+###### **ATM 2**
+
+```{r fig.height=8}
+ATM2.fc = ATM.fc(ATM.ts[,2], 2, plot = TRUE, forecast = 'arima')
+```
+
+STL and ETS fits have opposite shifts in the seasonality than the ARIMA model, which remains closely centered. As a result, based on the fit and performance metrics, the best fit model for ATM #2 is the ARIMA(3,0,3)(0,1,1)[7] with drifting with Box-Cox Transformation of 0.72.
+
+***
+
+###### **ATM 3**
+
+Modeling the decided fit to `ATM3`, the forecast for May 2010 is shown below.
+
+```{r}
+temp = ATM.df %>% drop_na() %>% spread(ATM, Cash)
+ATM3.fc = ts(rep(mean(as.matrix(temp[363:365, 2:4])), 31), start = 366, end = 396)
+autoplot(ts(ATM.ts[,3], frequency = 1)) +
+  autolayer(ATM3.fc, series = '') +
+  labs(title = "ATM #3 Cash Withdrawal Forecast",
+       subtitle = "1 May, 2009 to 31 May, 2010",
+       x = "Days") +
+  scale_y_continuous("Amount of Cash Withdrawal",
+                     labels = scales::dollar_format(scale = 0.1, suffix = "K")) +
+  theme(legend.position = "none")
+```
+
+Therefore, the best fit model is the expected value of cash withdraw from ATM 1-3, i.e. $E[ATM_3] = \frac {\sum_{i=1}^{n} (ATM_i)}{n}$ where n = 3.
+
+***
+
+###### **ATM 4**
+
+```{r fig.height=8}
+ATM4.fc = ATM.fc(ATM.ts[,4], 4, plot = TRUE, forecast = 'arima')
+```
+
+`ATM4` is quite haphazard in its seasonality, the predictive intervals for each model are also large and none of them capture the series as expected. Thus, based on the performance metrics, the best fit model for ATM #4 is the ARIMA(0,0,1)(2,0,0)[7] with a non-zero mean with Box-Cox Transformation of 0.45.
+
+***
+
+##### Final Forecast
+
+Finally, let's save the forecast for May 2010. The best fit models used to forecast the amount of cash withdrawal for the month of May for each ATMs are:
+
+* ATM #1 : ARIMA(0,0,2)(0,1,1)[7] with Box-Cox Transformation of 0.26.
+* ATM #2 : ARIMA(3,0,3)(0,1,1)[7] with drifting with Box-Cox Transformation of 0.72.
+* ATM #3 : $E[ATM_3] = \frac {\sum_{i=1}^{n} (ATM_i)}{n}$ where n = 3.
+* ATM #4 : ARIMA(0,0,1)(2,0,0)[7] with non-zero mean with Box-Cox Transformation of 0.45.
+
+```{r}
+DATE = seq(as.Date('2010-05-01'), as.Date('2010-05-31'), 1)
+ATM = c(rep('ATM1', 31), rep('ATM2', 31), rep('ATM3', 31), rep('ATM4', 31))
+Cash = c(ATM1.fc, ATM2.fc, ATM3.fc, ATM4.fc)
+# openxlsx::write.xlsx(data.frame(DATE, ATM, Cash), "ATM_forecasts_Deokinanan.xlsx")
+```
+
+> Daily Forecast for Each ATM for May 2010
+
+```{r echo=FALSE}
+ATM_forecasts_Deokinanan = read_excel("ATM_forecasts_Deokinanan.xlsx",
+                                      col_types = c("date", "text", "numeric"))
+ATM_forecasts_Deokinanan %>% kable() %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "150px")
+```
+
+#### Part B – Forecasting Power
+
+##### Exploratory Analysis
+
+The data set contains monthly residential power usage for January 1998 until December 2013. The variable `KWH` is power consumption in Kilowatt-hours.
+
+```{r}
+power.df = read_excel("ResidentialCustomerForecastLoad-624.xlsx")
+power.ts = ts(power.df$KWH, start = c(1998,1), frequency = 12)
+```
+```{r echo=FALSE}
+power.df$CaseSequence = as.character(power.df$CaseSequence)
+power.df %>% kable(caption = "Residential Power Usage")  %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "200px")
+```
+
+From the few summary statistics below, the mean kiloWatt hour is 6502475 kWh, with a standard deviation of 1447571 kWh. With a near-zero skewness and kurtosis, the data seems to be nearly normal. On the contrary, there are a few discrepancies. Firstly, the data set contains n = 192 cases, however, one case is missing. Lastly, the boxplot reveals that there is a likely outlier in this set.
+
+```{r echo=FALSE}
+describe(power.df)[-c(1,2),-1] %>% kable(digits = 2L, caption = "Descriptive Statistics of Power Usage") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+```{r fig.width=8, fig.height=6}
+p1 = ggplot(power.df, aes(y = KWH)) +
+  geom_boxplot(fill = "steelblue2") +
+  coord_flip() +
+  theme(aspect.ratio = 3/10,
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(title ="Jan, 1998 to Dec, 2013",
+       subtitle = "Residential Power Usage Boxplot",
+       y = sprintf("# of outliers = %d", length(boxplot(power.df[,3], plot = FALSE)$out)))
+
+temp = transform(power.df, date = reshape::colsplit(`YYYY-MMM`, split = "\\-", names = c('year', 'month')))
+temp$Date = with(temp, sprintf("%s-%d", date.month, date.year))
+p2 = temp %>%
+  ggplot(aes(x = zoo::as.yearmon(Date,"%b-%Y"), y = KWH)) +
+  geom_line(color="steelblue2", size = 1) +
+  labs(subtitle = "Residential Power Usage Time Series",
+       x = "Month", y = "Power Used, in kWh")
+gridExtra::grid.arrange(p1, p2, ncol = 1)
+```
+
+```{r echo = FALSE}
+sprintf("This missing case is on %s.", power.df[!complete.cases(power.df),2])
+sprintf("On %s, an unexpectly low power usage of %0.0f kWh was recorded.", power.df[which(power.df[,3] == min(power.df[,3], na.rm = TRUE)),2], min(power.df[,3], na.rm = TRUE))
+```
+
+With limited information, it is unknown why this oddly low usage amount was recorded. It can either be a rare occurrence or an error in the data collection process. Therefore, interpolation will be required since this can influence the analysis. As in Part A, `tsclean` will be used to both interpolate extreme and missing values. That is, missing data is done by fitting a seasonal model to the data, and then interpolate the seasonally adjusted series, before re-seasonalizing. While identifying outliers and suggest reasonable replacements, residuals are identified by fitting a periodic STL decomposition for seasonal data. Residuals are deemed as outliers if they lie outside the range $\pm2(q_{0.9}−q_{0.1})$ where $q_p$ is the p-quantile of the residuals.
+
+***
+
+##### Data Transformation
+
+With not much data tidying and transformation necessary, the data is made into a workable time series.
+
+```{r}
+power.ts = tsclean(power.ts)
+describe(power.ts)[,-1] %>% kable(digits = 2L, caption = "Descriptive Statistics of Power Usage") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+***
+
+##### Time Series Features
+
+In the previous sections, the data itself was examined and transformed appropriately to prevent bias and errors in the forecast. This section will now dive into the time series itself to examine its characteristics and determine the best modeling technique to forecast the monthly residential power usage in kWh for 2014.
+
+```{r}
+ggtsdisplay(power.ts, main = "Residential Power Usage", ylab = "Power Used, in kWh", xlab = "Month")
+```
+
+Immediately, the outlier and missing values were interpolated and the time series plot shows the seasonality of data. It appears to be two peaks every year, suggesting the pattern from peak to trough is from that start of a year to mid-year, then the end. There is no steady trend over the years. The ACF highlights the autocorrelations are in a "scalloped" shape, further confirming that there is seasonality. Because substantially more than 5% of spikes are outside the bounds of the blue dashed line, the series is not white noise. From the partial autocorrelation (PACF), there a few significant lags at the beginning with a sinusoidal decay, while all other PACF are within the critical limit. Altogether, the time series plot confirms that it is non-stationary, as seasonality and will require differencing in the lags to be made into a stationary time series.
+
+```{r fig.width=8, fig.height=6}
+p1 = ggseasonplot(power.ts, year.labels = FALSE, continuous = TRUE) +
+  labs(title = "Residential Power Usage",
+       subtitle = "Seasonal Plot",
+       y = "Power Used, in kWh",
+       x = "Month")
+p2 = ggsubseriesplot(power.ts) +
+  labs(subtitle = "Seasonal Subseries Plot",
+       y = "Power Used, in kWh",
+       x = "Month")
+gridExtra::grid.arrange(p1, p2, ncol = 1)
+```
+
+The seasonal plot shows that there is a steady decline from January to May, which then increases until August before it drops moving to November. The month of August has the most consumption of power, followed by January. This usage pattern is an influence of the seasons. If this is residential power usages from countries located in the Northern Hemisphere, weather seasonality will influence the amount of power consumption. In the summer, June - September, the use of air conditioning systems cause electricity usage to increase. If homes are heated with an electric heating system, they will generally have high electricity usage during winter months. This may explain the two maximum distinct peaks in the seasonal plots.
+
+For this time series, it was helpful that the stabilization of the seasonal variability throughout the years may be necessary. Using Box-Cox transformation, the optimal $lambda=-0.14$. The resulting transformation highlights that the smaller variability was stretched, while the larger variability was diminished. Overall, the variation appears much more stable now.
+
+```{r}
+bct = function(ts, title){
+  a = autoplot(ts) +
+    labs(title = sprintf("Before: %s", title),
+         x = "Year",
+         y = "Amount of Cash Withdrawal")
+  lambda = BoxCox.lambda(ts)
+  at = autoplot(BoxCox(ts, lambda)) +
+    labs(title = sprintf("Transformed: %s", title),
+         subtitle = sprintf("lambda = %0.2f", lambda),
+         y = "Box-Cox Transformed",
+         x = "Year")
+  gridExtra::grid.arrange(a, at)
+}
+lambda = BoxCox.lambda(power.ts)
+bct(power.ts, title = "Residential Power Usage")
+```
+
+Now applying a decomposition to time series is useful to further study time series data, and exploring historical changes over time. Decomposition of the time series done using the STL decomposition. From the seasonal plot, there doesn't appear to be quick changes in the seasonality over the years, i.e. the seasonal pattern seems constant through time, so the loess window for seasonal extraction will be the span.
+
+```{r}
+power.ts %>% stl(s.window = 'periodic', robust = TRUE) %>%
+  autoplot()  +
+  labs(title = "Seasonal & Trend Decomposition for Power Usage Time Series", x = "Year")
+```
+
+The decomposition highlights the seasonality component, with no drastic changes to note. The panel bars indicate that the variation attributed to the trend is much smaller than the seasonal component and consequently only a small part of the variation in the data series.
+
+Exponential smoothing methods were considered to fit the time series based on variations in the components. This technique will determine a possible model based on the best values in the AICc. It shows that the ETS(A, Ad, A) model best fits the data for the transformed power usage data, i.e. exponential smoothing with additive error, additive damped trend component, and additive seasonality.
+
+```{r}
+power.ts %>% ets(lambda = lambda, biasadj = TRUE)
+```
+
+Since the time series is non-stationary, differencing must be done to help stabilize the mean of a time series by removing changes in the level of a time series, and therefore reducing trend and seasonality. This will in turn make the time series stationary, and appropriate to produce an ARIMA model if it can fit the data better.
+
+```{r echo = FALSE}
+tst = power.ts %>% BoxCox(lambda)
+sprintf("And so, the number of differences required for time series to be made stationary is %0.0f.",
+        ndiffs(tst, test = "kpss"))
+sprintf("While, the number of differences required for time series to be made seasonally stationary is %0.0f.",
+        nsdiffs(tst, test = "seas"))
+```
+
+ARIMA models are capable of modeling a wide range of seasonal and non-seasonal data. The data is non-stationary, with seasonality, so there will be a seasonal difference, D = 1. These also appear to be non-stationary, but since the unit root test still resulted in a smaller than the 1% critical value, it is not necessary. Therefore, d = 0, and the data has now made it stationary.
+
+```{r}
+tst %>% diff(lag = 12) %>% ur.kpss() %>% summary()
+ggtsdisplay(diff(tst, lag = 12),
+            main = "Residential Power Usage",
+            ylab = "Power Used, in kWh",
+            xlab = "Month")
+```
+
+The aim now is to find an appropriate ARIMA model based on the ACF and PACF. Ignoring one significant spike in each plot that is just outside the limits, and not in the first few lags, both the ACF and PACF plots are sinusoidal decaying and there is a large significant spike at lag 12. There are smaller significant spikes at lag 1 and 4 in the PACF. In the ACF, the first significant lag suggests a non-seasonal moving average component, MA(1), making q = 1 and Q = 0. With no other significant lags in the first few lags of the seasonal component of the PACF (minus one being ignored), p = 0, and P = 2.
+
+An $ARIMA(p,d,q)(P,D,Q)_m$ model is where p/P = order of the autoregressive part, d/D = degree of first differencing involved, q/Q = order of the moving average part, and m = number of observations. Altogether, a possible model is ARIMA(0,0,1)(>3,1,0).
+
+To confirm, the `auto.arima()` function to determine are all determined by minimizing the information criteria, i.e. AICc. The suggested model is ARIMA(0,0,1)(2,1,0)[12] with drifting, which will be used since the deduction by observation was very close.
+
+```{r}
+power.ts %>% auto.arima(lambda = lambda, biasadj = TRUE)
+```
+
+The last model of interest will be a quick, effective hybrid forecast. This method averages single-model forecasts to produce point estimates that are more likely to be better than any of the contributing forecast models (Peter Ellis, 2016). It combines the functionality of forecasting techniques. In class, it was learned that exponential smoothing and ARIMA models are the two most widely used approaches to time series forecasting. While ETS models are based on a description of the trend and seasonality in the data, ARIMA models aim to describe the autocorrelations in the data. So, a fitting is done to find a hybrid forecast model that has more accurate coverage.
+
+```{r}
+library(forecastHybrid)
+power.ts %>% hybridModel(model = 'ae', lambda = lambda)
+```
+
+Therefore, the proposed models that might be suitable for fitting the time series include:
+
+Technique | Proposed Model
+----------|----------
+Forecasting with Decomposition | STL Decomposition
+Forecasting with Exponential Smoothing | ETS(A, Ad, A)
+Forecasting with ARIMA | ARIMA(0,0,1)(2,1,0)[12] with drifting
+Forecasting with Hybrid Forecasting | 50% ETS + 50% ARIMA (equivalent to ETS(A, A, A) & ARIMA(0,0,1)(2,1,0)[12] with drifting)
+
+***
+
+##### Forecast & Model Comparison
+
+Because each model was fitted using different transformations, information criteria are not reliable for comparison, thus cross-validation is performed by splitting the data into a training and testing set, where the root mean squared error is used to identify the best fit model. The following function will split the data set and fit each model as specified above. A performance test will then be conducted to determining the root mean squared error of the train data with the test data. The function is also capable of plotting residuals of each model once specified.
+
+```{r}
+ts_accuracy = function(tseries, year, rmse, residual){
+  # Split to train and test
+  train = window(tseries, end = c(year, 12))
+  test = window(tseries, start = year + 1)
+  # Finds optimal lambda
+  lambda = BoxCox.lambda(tseries)
+  # Forecast Models
+  stl.model = train %>% stl(s.window = 'periodic', robust = TRUE)
+  ets.model = train %>% ets(model='AAA', damped = TRUE, lambda = lambda, biasadj = TRUE)
+  arima.model = train %>% Arima(order = c(0,0,1), seasonal = c(2,1,0),
+                                lambda = lambda, biasadj = TRUE)
+  hybrid.model = train %>% hybridModel(model = 'ae', lambda = lambda)
+  # Returns Residuals Plots
+  if(tolower(residual) == 'stl'){checkresiduals(stl.model)}
+  if(tolower(residual) == 'ets'){checkresiduals(ets.model)}
+  if(tolower(residual) == 'arima'){checkresiduals(arima.model)}
+  if(tolower(residual) == 'hybrid'){checkresiduals(hybrid.model)}
+  # Forecast
+  stl.fc = forecast(stl.model, h = length(test))$mean
+  ets.fc = forecast(ets.model, h = length(test))$mean
+  arima.fc = forecast(arima.model, h = length(test))$mean
+  hybrid.fc = forecast(hybrid.model, h = length(test))$mean
+  # Performance statistics
+  accuracy = data.frame(RMSE = cbind(accuracy(stl.fc, test)[,2],
+                                     accuracy(ets.fc, test)[,2],
+                                     accuracy(arima.fc, test)[,2],
+                                     accuracy(hybrid.fc, test)[,2]))
+  row.names(accuracy) = c(sprintf("Test Year: %d", year + 1))
+  names(accuracy) = c("STL", "ETS", "ARIMA","HYBRID")
+  # Returns RMSE
+  if(rmse){accuracy}
+}
+```
+
+From the table below, the overall smallest RMSE is from the hybrid model. But it is noteworthy to see that for each year of the validation test, different models returned the smallest error. For instance, the RMSE for the training and testing split at 2009-2010 and 2012-2013, the best model is the hybrid model, while for the 2010-2011 split, the best model is the ETS fit, and the 2011-2012 split shows the best fit is with ARIMA(0,0,1)(2,1,0)[12]. If the hybrid model is not the best fit, it is the second best-fitting model for forecast based on RMSE. It may be due to the combination of the ETS and ARIMA which increased the errors than the modeling with one of them only.
+
+```{r}
+df = data.frame()
+for (year in c(2009:2012)){
+  df = rbind(df, ts_accuracy(power.ts, year, rmse = TRUE, residual = FALSE))
+}
+df = rbind(df, Mean = colMeans(df))
+```
+```{r echo=FALSE}
+kable(df, digits = 2L, caption = "RMSE for Each Forecasting Models") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+Because the best model changed based on the year, but the 50% ETS + 50% ARIMA produced the smallest overall RMSE, the residuals of this model are shown below. In this collection on plots, there are a time series, ACF, and a histogram of the residuals (with an overlaid normal distribution for comparison). Firstly, the residual time series plot highlights some large negative residuals. The histogram suggests that the residuals may be right-skewed but the mean of the residuals appears to be near zero. Moreover, there is no significant autocorrelation in the residuals series, suggesting the forecasts are good.
+
+```{r}
+ts_accuracy(power.ts, 2012, rmse = FALSE, residual = "hybrid")
+```
+
+Lastly, the following function will plot all the data in addition to the forecast based on the specified model for a visual comparison. There is also a zoomed-in plot of the forecast for clarity. The function is also capable of returning any of the forecast created by the specified model. This will be used to visually analyze the fit and officially state the final model.
+
+```{r}
+power.fc = function(tseries, plot, forecast){
+  # Finds optimal lambda
+  lambda = BoxCox.lambda(tseries)
+  # Forecast Models
+  stl.model = tseries %>% stl(s.window = 'periodic', robust = TRUE)
+  ets.model = tseries %>% ets(lambda = lambda, biasadj = TRUE)
+  arima.model = tseries %>% auto.arima(lambda = lambda, biasadj = TRUE)
+  hybrid.model = tseries %>% hybridModel(model = 'ae', lambda = lambda)
+  # Forecast
+  power.stl.fc = forecast(stl.model, h = 12)
+  power.ets.fc = forecast(ets.model, h = 12)
+  power.arima.fc = forecast(arima.model, h = 12)
+  power.hybrid.fc = forecast(hybrid.model, h = 12)
+  # Full forecast plot
+  p1 = autoplot(tseries) +
+    autolayer(power.stl.fc, series = 'STL', PI = FALSE) +
+    autolayer(power.ets.fc, series = 'ETS', PI = FALSE) +
+    autolayer(power.arima.fc, series = 'ARIMA', PI = FALSE) +
+    autolayer(power.hybrid.fc, series = 'HYBRID', PI = FALSE) +
+    labs(title = "Residential Power Usage Forecast",
+         subtitle = "Jan, 1998 to Dec, 2014",
+         x = "Year",
+         y = "Power Used, in kWh") +
+    guides(colour = guide_legend(title = "Models")) +
+    theme(legend.position = "top")
+  # Zoomed in plot on forecast
+  p2 = p1 + labs(title = "Zoom: Residential Power Usage Forecast",
+           subtitle = "Jan, 2012 to Dec, 2014") +
+    xlim(c(2012,2015))
+  # Returns plots
+  if(plot){gridExtra::grid.arrange(p1, p2, ncol = 1)}
+  # Return Forecast Values
+  if(tolower(forecast) == 'stl'){return(power.stl.fc)}
+  if(tolower(forecast) == 'ets'){return(power.ets.fc)}
+  if(tolower(forecast) == 'arima'){return(power.arima.fc)}
+  if(tolower(forecast) == 'hybrid'){return(power.hybrid.fc)}
+}
+```
+
+```{r fig.height=8}
+forecast = power.fc(power.ts, plot = TRUE, forecast = 'hybrid')
+```
+
+```{r fig.height=4, echo=FALSE}
+autoplot(power.ts) +
+  autolayer(forecast, PI = TRUE) +
+  labs(title = "Residential Power Usage Forecast using Hybrid Model",
+       subtitle = "Jan, 2012 to Dec, 2014",
+       x = "Year",
+       y = "Power Used, in kWh") +
+  xlim(c(2012,2015))
+```
+
+Visually, each model does a good job fitting the series. Therefore, based on the performance metrics, the best fit model for forecasting the residential power usage for 2014 is the 50% ETS + 50% ARIMA model hybrid method. That is, an ETS(A, A, A) model with an ARIMA(0,0,1)(2,1,0)[12] with drifting and a Box-Cox Transformation of -0.144.
+
+***
+
+##### Final Forecast
+
+Finally, let's save the forecast for 2014.
+
+```{r}
+date = seq(as.Date('2014-01-01'), as.Date('2014-12-01'), by = 'month') %>% format('%Y-%b')
+# openxlsx::write.xlsx(data.frame(YYYY.MM = date, KWH = forecast$mean), "power_forecasts_Deokinanan.xlsx")
+```
+
+> Monthly Forecast of Residential Power Usage in kWh for 2014
+
+```{r echo=FALSE}
+power_forecasts_Deokinanan = read_excel("power_forecasts_Deokinanan.xlsx")
+power_forecasts_Deokinanan %>% kable() %>%
+  kable_styling(bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "150px")
+```
+
+##### Works Cited
+
+* David Shaub and Peter Ellis (2020). forecastHybrid: Convenient Functions for Ensemble Time Series Forecasts. https://gitlab.com/dashaub/forecastHybrid, https://github.com/ellisp/forecastHybrid.
+
+#### Part C – Waterflow Pipe
+
+##### Exploratory Analysis
+
+Two separate data sets are provided containing n = 1000 recordings of water flows from different water pipelines. Each pipeline is recorded at a different time. There is no missing data and no outliers.
+
+```{r}
+pipe.1 = read_excel("Waterflow_Pipe1.xlsx", col_types = c("date", "numeric"))
+pipe.2 = read_excel("Waterflow_Pipe2.xlsx", col_types = c("date", "numeric"))
+```
+```{r, echo = FALSE}
+kable(list(pipe.1, pipe.2)) %>%
+  add_header_above(c("Pipeline 1" = 1, "Pipeline 2" = 1)) %>%
+  kable_styling(full_width = TRUE, bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "200px")
+```
+
+`pipe.1` is recorded at uneven time intervals from 23 October 2015 to 1 November 2015, while `pipe.2` is recorded at even hourly intervals from 23 October 2015 to 3 December 2015. Before more exploration can be performed, the data needs to be transformed into a time-base sequence and aggregate based on the hour. Moreover, there are multiple recordings within an hour for `pipe1` since the count within a day is more than 24, therefore the hourly mean will be used. `pipe.2` doesn't require data transformation at this moment since the count within a day is no more than 24.
+
+```{r echo=FALSE}
+df = pipe.1
+df$Date = date(df$`Date Time`)
+kable(as.data.frame(table(df$Date)), caption = "Number of Records per Day for Pipe 1") %>%
+  kable_styling(full_width = TRUE, bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "200px") 
+df = pipe.2
+df$Date = date(df$`Date Time`)
+kable(as.data.frame(table(df$Date)), caption = "Number of Records per Day for Pipe 2") %>%
+  kable_styling(full_width = TRUE, bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "200px")
+```
+
+***
+
+##### Data Transformation
+
+With not much data tidying and transformation necessary, the data is made into a workable time series. The transformed data set now highlights there are at most 24 recordings per day, suggesting one recording every hour, whether the average of all recordings within another or not.
+
+```{r}
+pipe.1 = pipe.1 %>% 
+  mutate(Date = date(`Date Time`),
+         Hour = hour(`Date Time`)) %>% 
+  group_by(Date, Hour) %>% 
+  summarize(WaterFlow = mean(WaterFlow)) %>% 
+  ungroup() %>%
+  mutate(DateTime = ymd_h(paste(Date, Hour))) %>% 
+  select(DateTime, WaterFlow)
+```
+```{r echo=FALSE}
+df = pipe.1
+kable(as.data.frame(table(cut(df$DateTime, "day"))), caption = "Number of Records per Day for Pipe 1") %>%
+  kable_styling(full_width = TRUE, bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "200px") 
+```
+
+```{r}
+pipe.1.ts = ts(pipe.1$WaterFlow)
+pipe.2.ts = ts(pipe.2$WaterFlow)
+```
+```{r echo=FALSE}
+describe(cbind(pipe.1.ts, pipe.2.ts))[,-1] %>% kable(digits = 2L, caption = "Descriptive Statistics of the Pipelines") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+```{r fig.width=8, fig.height=4} 
+p1 = ggplot(pipe.1, aes(y = WaterFlow)) +
+  geom_boxplot(fill = "steelblue2", outlier.shape = NA) +
+  coord_flip() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(title ="Boxplots of Waterflow Pipelines",
+       subtitle = "Pipeline #1")
+p2 = ggplot(pipe.2, aes(y = WaterFlow)) +
+  geom_boxplot(fill = "steelblue2") +
+  coord_flip() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(subtitle = "Pipeline #2")
+gridExtra::grid.arrange(p1, p2, ncol=1)
+```
+
+From the few summary statistics below, the mean water flow from pipeline #1 is 19.89 ($\sigma = 4.24$), whereas for pipeline #2, it is 39.56 ($\sigma = 16.05$). Pipeline #2 has more water flowing through it. With a near-zero skewness and kurtosis, the data seems to follow a normal distribution. 
+
+***
+
+##### Time Series Features  
+
+By examining the time series' characteristics, the best modeling technique to forecast a week's worth of water-flow from each pipeline can be determined
+
+###### **Pipeline #1**
+
+The time plot depicts the unsteadiness of the series. There is no apparent seasonality and no distinct trend. The ACF and PACF highlight that the autocorrelations are all white noise. Altogether, the time series plot confirms that it is already stationary, STL decomposition cannot be used for forecasting and it will not require differencing.
+
+```{r}
+ggtsdisplay(pipe.1.ts, main = "Waterflow from Pipeline #1", ylab = "Amount of Water", xlab = "Time")
+```
+
+For this time series, it seems helpful to stabilize the variability, therefore Box-Cox transformation was calculated. The optimal $lambda=0.27$. While the transformation made little difference to the forecast, it will have a large effect on prediction intervals.
+
+```{r}
+bct = function(ts, title){
+  a = autoplot(ts) +
+    labs(title = sprintf("Before: %s", title),
+         x = "Time",
+         y = "Amount of Water")
+  lambda = BoxCox.lambda(ts)
+  at = autoplot(BoxCox(ts, lambda)) +
+    labs(title = sprintf("Transformed: %s", title),
+         subtitle = sprintf("lambda = %0.2f", lambda),
+         y = "Box-Cox Transformed",
+         x = "Time")
+  gridExtra::grid.arrange(a, at)
+}
+lambda = BoxCox.lambda(pipe.1.ts)
+bct(pipe.1.ts, title = "Waterflow from Pipeline #1")
+```
+
+Exponential smoothing methods were considered to fit the time series based on the variability. This technique will determine a possible model based on the best values in the AICc. It is of no surprise that the ETS(A, N, N) model best fits the data, i.e. exponential smoothing with additive error, no trend component, and no seasonality.
+
+```{r}
+pipe.1.ts %>% ets(lambda = lambda, biasadj = TRUE)
+```
+
+Moreover, it was already determined that the number of differences required for time series to be made stationary is 0. And so, an ARIMA model is also considered. The unit root test resulted in a smaller than the 1% critical value, therefore, d = 0. Based on the ACF and PACF, there is no significant spike, making (p,q) = 0. 
+
+An $ARIMA(p,d,q)$ model is where p = order of the autoregressive part, d = degree of first differencing involved, and q = order of the moving average part. Altogether, a possible model is ARIMA(0,0,0) with a non-zero mean. This was further confirmed by the `auto.arima()`.
+
+
+```{r}
+pipe.1.ts %>% BoxCox(lambda) %>% ur.kpss() %>% summary()
+pipe.1.ts %>% auto.arima(lambda = lambda, biasadj = TRUE)
+```
+
+Therefore, the proposed models that might be suitable for fitting the time series include:
+
+Technique | Proposed Model
+----------|----------
+Forecasting with Exponential Smoothing | ETS(A, N, N)
+Forecasting with ARIMA | ARIMA(0,0,0) with non-zero mean
+
+***
+
+###### **Pipeline #2**
+
+Similar to the time plot of pipeline #1, pipeline #2 depicts an unsteadiness in its series. There is no apparent seasonality and no distinct trend. The ACF and PACF highlight a few significant autocorrelations with no pattern. Altogether, the time series will undergo unit testing to determine if these autocorrelations can be distinguished from white noise. If no, then the data will be treated as stationary, and it will not require differencing.
+
+```{r}
+ggtsdisplay(pipe.2.ts, main = "Waterflow from Pipeline #2", ylab = "Amount of Water", xlab = "Time")
+```
+
+Box-Cox transformation was calculated to help stabilize the variability. The optimal $lambda=0.85$. Once again, the transformation made little difference to the forecast, it will have a large effect on prediction intervals.
+
+```{r}
+lambda = BoxCox.lambda(pipe.2.ts)
+bct(pipe.2.ts, title = "Waterflow from Pipeline #2")
+```
+
+As with pipeline #1, it is of no surprise that the ETS(A, N, N) model best fits the data, i.e. exponential smoothing with additive error, no trend component, and no seasonality.
+
+```{r}
+pipe.2.ts %>% ets(lambda = lambda, biasadj = TRUE)
+```
+
+Moreover, the unit root test resulted in a smaller than all the critical ranges. This suggests that the time series is already stationary. And so, an ARIMA model is also considered. With, d = 0, no significant peak are at the first lag, (p,q) = 0. Altogether, a possible model is ARIMA(0,0,0) with a non-zero mean, which was further confirmed by the `auto.arima()`.
+
+```{r}
+pipe.2.ts %>% BoxCox(lambda) %>% ur.kpss() %>% summary()
+pipe.2.ts %>% auto.arima(lambda = lambda, biasadj = TRUE)
+```
+
+Therefore, the proposed models that might be suitable for fitting the time series include:
+
+Technique | Proposed Model
+----------|----------
+Forecasting with Exponential Smoothing | ETS(A, N, N)
+Forecasting with ARIMA | ARIMA(0,0,0) with non-zero mean
+
+***
+
+##### Forecast & Model Comparison
+
+Simple cross-validation with these models is conducted to measure the root mean squared error. Because it is expected that they both will forecast close to the mean of the data, $\Delta RMSE$ will be very small.
+
+```{r}
+ts_accuracy = function(tseries, time, rmse){
+  # Split to train and test
+  train = window(tseries, end = time)
+  test = window(tseries, start = time + 1)
+  # Finds optimal lambda
+  lambda = BoxCox.lambda(tseries)
+  # Forecast Models
+  ets.model = train %>% ets(model = 'ANN', lambda = lambda, biasadj = TRUE)
+  arima.model = train %>% Arima(order = c(0,0,0), lambda = lambda, biasadj = TRUE)
+  # Forecast
+  ets.fc = forecast(ets.model, h = length(test))$mean
+  arima.fc = forecast(arima.model, h = length(test))$mean
+  # Performance statistics
+  accuracy = data.frame(RMSE = cbind(accuracy(ets.fc, test)[,2],
+                                     accuracy(arima.fc, test)[,2],
+                                     accuracy(ets.fc, test)[,2]-accuracy(arima.fc, test)[,2]))
+  row.names(accuracy) = c(sprintf("Test Starting: %d", time + 1))
+  names(accuracy) = c("ETS", "ARIMA", "Delta RMSE")
+  # Returns RMSE
+  if(rmse){accuracy}
+}
+```
+
+From the tables below, the overall smallest RMSE is the ETS model for Pipeline #1, and ARIMA(0,0,0) for Pipeline #2. The difference between the fit is quite small. While one model may fit the training data slightly better than the other model, but the one with the more accurate forecasts on the test set is usually the best choice.
+
+```{r}
+df.p1 = data.frame()
+for (time in seq(150,222,24)){
+  df.p1 = rbind(df.p1, ts_accuracy(pipe.1.ts, time, rmse = TRUE))
+}
+df.p1 = rbind(df.p1, Mean = colMeans(df.p1))
+```
+
+```{r echo=FALSE}
+kable(df.p1, digits = 5L, caption = "Pipeline #1: RMSE for Each Models") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+```{r}
+df.p2 = data.frame()
+for (time in seq(850,976,24)){
+  df.p2 = rbind(df.p2, ts_accuracy(pipe.2.ts, time, rmse = TRUE))
+}
+df.p2 = rbind(df.p2, Mean = colMeans(df.p2))
+```
+
+```{r echo=FALSE}
+kable(df.p2, digits = 5L, caption = "Pipeline #2: RMSE for Each Models") %>%
+  kable_styling(bootstrap_options = "striped", full_width = TRUE)
+```
+
+For pipeline #1 and #2, there is nothing odd among the residuals for either model, and the Ljung Box Test Statistic suggests that the models do not show a lack of fit.
+
+```{r echo=FALSE}
+ets.model.p1 = pipe.1.ts %>% ets(model='ANN', lambda = lambda, biasadj = TRUE)
+arima.model.p1 = pipe.1.ts %>% Arima(order = c(0,0,0), lambda = lambda, biasadj = TRUE)
+
+ets.model.p2 = pipe.2.ts %>% ets(model='ANN', lambda = lambda, biasadj = TRUE)
+arima.model.p2 = pipe.2.ts %>% Arima(order = c(0,0,0), lambda = lambda, biasadj = TRUE)
+
+# Residuals for Pipeline #1
+checkresiduals(ets.model.p1, plot = FALSE)
+checkresiduals(arima.model.p1, plot = FALSE)
+
+# Residuals for Pipeline #1
+checkresiduals(ets.model.p2, plot = FALSE)
+checkresiduals(arima.model.p2, plot = FALSE)
+```
+
+And so, the forecast is determined for every hour within a day for a week. The following plots show that the forecast for both the ETS and ARIMA model fits on each other, i.e. both forecasted to be the mean. For pipeline #1, the ETS and ARIMA model forecast that the water-flow is expected to be 19.892, with ETS 95% PI = (11.778, 28.406) while ARIMA 95% PI = (11.795, 28.386). Whereas, for pipeline #1, the ETS and ARIMA model forecast that the water-flow is expected to be 39.52, with ETS 95% PI = (9.686, 72.560) while ARIMA 95% PI = (9.697, 72.537).
+
+```{r}
+# Forecast
+ets.fc.p1 = forecast(ets.model.p1, h = 7*24)
+arima.fc.p1 = forecast(arima.model.p1, h = 7*24)
+
+ets.fc.p2 = forecast(ets.model.p2, h = 7*24)
+arima.fc.p2 = forecast(arima.model.p2, h = 7*24)
+```
+
+```{r echo=FALSE, fig.height=8}
+# Full forecast plot
+p1 = autoplot(pipe.1.ts) +
+  autolayer(ets.fc.p1, series = 'ETS', PI = FALSE) +
+  autolayer(arima.fc.p1, series = 'ARIMA', PI = FALSE) +
+  labs(title = "Waterflow from Pipeline #1",
+       subtitle = "Time-plot",
+       x = "Time",
+       y = "Waterflow") +
+  guides(colour = guide_legend(title = "Models")) +
+  theme(legend.position = "top")
+
+# Zoomed in plot on forecast
+p2 = p1 + labs(title = "",
+               subtitle = "Zoomed-in Time plot") +
+  theme(legend.position = "none") + 
+  xlim(c(230,254))
+
+# Predictive interval
+p3 = autoplot(pipe.1.ts) +
+  autolayer(arima.fc.p1, PI = TRUE) +
+  labs(subtitle = "Forecast Predictive Interval",
+       x = "Time",
+       y = "Waterflow") +
+  xlim(c(220,300))
+gridExtra::grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+```{r echo=FALSE, fig.height=8}
+# Full forecast plot
+p1 = autoplot(pipe.2.ts) +
+  autolayer(ets.fc.p2, series = 'ETS', PI = FALSE) +
+  autolayer(arima.fc.p2, series = 'ARIMA', PI = FALSE) +
+  labs(title = "Waterflow from Pipeline #2",
+       subtitle = "Time-plot",
+       x = "Time",
+       y = "Waterflow") +
+  guides(colour = guide_legend(title = "Models")) +
+  theme(legend.position = "top")
+
+# Zoomed in plot on forecast
+p2 = p1 + labs(title = "",
+               subtitle = "Zoomed-in Time plot") +
+  theme(legend.position = "none") + 
+  xlim(c(990,1168))
+
+# Predictive interval
+p3 = autoplot(pipe.2.ts) +
+  autolayer(ets.fc.p2, PI = TRUE) +
+  labs(subtitle = "Forecast Predictive Interval",
+       x = "Time",
+       y = "Waterflow") +
+  xlim(c(980,1168))
+gridExtra::grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+***
+
+##### Final Forecast
+
+Analytically, each model does a good job fitting both pipeline time series. Therefore, based on the performance statistics, the best model for each pipeline is:
+
+* Pipeline #1: ETS(A, N, N) with a Box-Cox Transformation of 0.27.
+* Pipeline #2: ARIMA(0, 0, 0) with a Box-Cox Transformation of 0.85.
+
+Finally, let's save the forecast.
+
+```{r}
+date.pipe1 = seq(ymd_hms('2015-11-01 24:00:00'), ymd_hms('2015-11-08 23:00:00'), by = as.difftime(hours(1)))
+date.pipe2 = seq(ymd_hms('2015-12-03 17:00:00'), ymd_hms('2015-12-10 16:00:00'), by = as.difftime(hours(1)))
+
+# openxlsx::write.xlsx(data.frame('Date.Time' = date.pipe1, 
+#                                 'WaterFlow' = ets.fc.p1$mean), "pipe1_forecasts_Deokinanan.xlsx")
+# openxlsx::write.xlsx(data.frame('Date.Time' = date.pipe2, 
+#                                 'WaterFlow' = arima.fc.p2$mean), "pipe2_forecasts_Deokinanan.xlsx")
+```
+
+> A Week of Hourly Forecast for Pipelines 1 & 2
+
+```{r echo=FALSE}
+pipe1_forecasts_Deokinanan = read_excel("pipe1_forecasts_Deokinanan.xlsx")
+pipe2_forecasts_Deokinanan = read_excel("pipe2_forecasts_Deokinanan.xlsx")
+
+kable(list(pipe1_forecasts_Deokinanan, pipe2_forecasts_Deokinanan)) %>%
+  add_header_above(c("Pipeline 1" = 1, "Pipeline 2" = 1)) %>%
+  kable_styling(full_width = TRUE, bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "200px")
+```
+
