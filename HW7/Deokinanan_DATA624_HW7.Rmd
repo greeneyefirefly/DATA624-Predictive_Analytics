@@ -1,0 +1,473 @@
+---
+title: " CUNY MSDS DATA 624 HW #7"
+author: "Samantha Deokinanan"
+date: "October 31, 2020"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: pygments
+---
+
+*Textbook: Max Kuhn and Kjell Johnson. Applied Predictive Modeling. Springer, New York, 2013.*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center", fig.height = 5, fig.width = 8, message = FALSE, warning = FALSE)
+```
+
+```{r}
+# Required R packages
+library(tidyverse)
+library(AppliedPredictiveModeling)
+library(caret)
+# Minor R Packages
+library(kableExtra)
+library(psych)
+```
+
+### Exercise 6.2 
+
+Developing a model to predict permeability (see Sect. 1.4) could save significant resources for a pharmaceutical company, while at the same time more rapidly identifying molecules that have a sufficient permeability to become a drug:
+
+###### (a) 
+
+Start R and use these commands to load the data:
+
+```{r}
+data(permeability)
+```
+
+The matrix fingerprints contain the 1,107 binary molecular predictors for the 165 compounds, while permeability contains permeability response.
+
+###### (b) 
+
+The fingerprint predictors indicate the presence or absence of substructures of a molecule and are often sparse meaning that relatively few of the molecules contain each substructure. Filter out the predictors that have low frequencies using the `nearZeroVar` function from the `caret` package. How many predictors are left for modeling?
+
+This function is good for diagnosing predictors that have one unique value or predictors that have very few unique values relative to the number of samples and the ratio of the frequency of the most common value to the frequency of the second most common value is large.
+
+```{r}
+predictors = nearZeroVar(fingerprints)
+fingerprints.new = fingerprints[,-predictors]
+```
+
+```{r echo=FALSE}
+sprintf("As a result, nearly, %0.0f%% of the predictors are left for modeling.", (dim(fingerprints.new)[2] / dim(fingerprints)[2])*100)
+```
+
+Moreover, to build a smaller model without predictors with extremely high correlations, it is best to reduce the number of predictors such that there are no absolute pairwise correlations above 0.90. The list below shows only significant correlations (at 5% level) for the top 10 highest correlations by the correlation coefficient. The results show that these ten have a perfect correlation of 1. There are 152 pairs of perfect correlation.
+
+```{r}
+corr = cor(fingerprints.new)
+corr[corr == 1] = NA 
+corr[abs(corr) < 0.85] = NA 
+corr = na.omit(reshape::melt(corr))
+head(corr[order(-abs(corr$value)),], 10) 
+```
+
+```{r}
+tooHigh = findCorrelation(cor(fingerprints.new), 0.90)
+fingerprints.new = fingerprints.new[, -tooHigh]
+```
+
+###### (c) 
+
+Split the data into a training and a test set, pre-process the data, and tune a PLS model. How many latent variables are optimal and what is the corresponding resampled estimate of $R^2$?
+
+For pre-processing, `center` was used to subtracts the mean of the predictor's data from the predictor values and `scale` to divide by the standard deviation. Next, the data is split into training and testing sets with a ratio of 7:3.
+
+```{r}
+set.seed(525)
+# Pre-processing
+filters = preProcess(fingerprints.new, method = c("center", "scale"))
+response = predict(filters, fingerprints.new)
+
+# Indices for 70% of the data set
+intrain = createDataPartition(permeability, p = 0.7)[[1]]
+
+# Separate test and training sets
+## Predictive variables
+train.p = response[intrain,]
+test.p = response[-intrain,]
+
+## Response variables
+train.r = permeability[intrain,]
+test.r = permeability[-intrain,]
+```
+
+A PLS model is fitted and it works by successively extracting factors from both predictive and target variables such that covariance between the extracted factors is maximized.
+
+```{r}
+set.seed(525)
+# Tuning PLS Model
+pls.model = train(train.p, train.r, 
+                  method = "pls", 
+                  metric = "Rsquared", 
+                  tuneLength = 10, 
+                  trControl = trainControl(method = "cv"))
+pls.model
+plot(pls.model, main = "R-squared Error of PLS Model")
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+p1 = xyplot(train.r ~ predict(pls.model), type = c("p", "g"), 
+       main = "Predicted vs Observed", 
+       xlab = "Predicted", 
+       ylab = "Observed", 
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(lm(y ~ x))
+         })
+
+p2 = xyplot(resid(pls.model) ~ predict(pls.model), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+From the partial least squared model, the number of components which resulted in the smallest root mean squared error is 2. It has RMSE = 10.88, $R^2$ = 0.57, and MAE = 8.06. While it does account for the largest portion of the variability in the data than all other latent variables, it does not produce the smallest error. The number of components that produces the smallest error is 5, with RMSE = 10.40, $R^2$ = 0.56, and MAE = 8.14. 
+
+###### (d) 
+
+Predict the response for the test set. What is the test set estimate of $R^2$?
+
+Using the test set of predictors, predictions were determined to see how well it compares to the actual values.
+
+```{r}
+prediction = predict(pls.model, test.p)
+xyplot(test.r ~ prediction, type = c("p", "g"), 
+       main = "Predicted vs Observed", 
+       xlab = "Predicted", 
+       ylab = "Observed", 
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(lm(y ~ x))
+         })
+postResample(prediction, test.r)
+```
+
+The plot of the predictions versus the actual permeability responses suggests that the fit may not be close but it does a pretty good generalizing the fit of the data. The performance statistics suggest that the model fits the test data with higher error, RMSE = 13.16. It also accounts for only 41.8% of the variability of the data with the mean absolute error is 9.03.
+
+###### (e) 
+
+Try building other models discussed in this chapter. Do any have better predictive performance?
+
+Penalized models will be built and compared to the PLS model. The `glmnet` method in `caret` has an alpha argument that determines what type of penalized model is fit, i.e. ridge or lasso. If alpha = 0 then a ridge regression model is fit, and if alpha = 1 then a lasso model is fit. Moreover, to tune over various penalties to define the amount of shrinkage. The best lambda is then defined as the lambda that minimizes the cross-validation prediction error rate. 
+
+From the ridge model below, the best tune is with a lambda = 99.39 since $R^2$ was used to select the optimal model using the largest value. It is equal to 0.54, while the RMSE is 11.24. Moreover, from the plots with the predictions, the fit with the observed values is a bit further from the 1:1 line, and the residuals are quite large.
+
+```{r}
+# Ridge Regression
+set.seed(525)
+lambda = round(seq(80, 120, length = 100),5)
+ridge.model = train(x = train.p, y = train.r, method = "glmnet",
+                    trControl = trainControl("cv", number = 10), metric = "Rsquared",
+                    tuneGrid = expand.grid(alpha = 0, lambda = lambda)
+                    )
+ridge.model$bestTune
+plot(ridge.model, main = "R-squared Error of Ridge Model")
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+p1 = xyplot(train.r ~ predict(ridge.model), type = c("p", "g"), 
+       main = "Predicted vs Observed", 
+       xlab = "Predicted", 
+       ylab = "Observed", 
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(lm(y ~ x))
+         })
+
+p2 = xyplot(resid(ridge.model) ~ predict(ridge.model), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+From the lasso model below, the best tune is with a lambda = 0.273 since $R^2$ was also used to select the optimal model using the largest value. It is equal to 0.54, while the RMSE is 10.59. Moreover, from the plots with the predictions, the fit with the observed values is closer to the 1:1 line, and the residuals are smaller than compared to the PLS and ridge models.  
+
+```{r}
+# Lasso Regression
+set.seed(525)
+lambda = round(seq(0, 3, length = 100),5)
+lasso.model = train(x = train.p, y = train.r, method = "glmnet",
+                    trControl = trainControl("cv", number = 10), metric = "Rsquared",
+                    tuneGrid = expand.grid(alpha = 1, lambda = lambda)
+                    )
+lasso.model$bestTune
+plot(lasso.model, main = "R-squared Error of LASSO Model")
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+p1 = xyplot(train.r ~ predict(lasso.model), type = c("p", "g"), 
+       main = "Predicted vs Observed", 
+       xlab = "Predicted", 
+       ylab = "Observed", 
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(lm(y ~ x))
+         })
+
+p2 = xyplot(resid(lasso.model) ~ predict(lasso.model), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+From the elastic net model below, the best tune is with an alpha = 0.1 and lambda = 3.69 since $R^2$ was also used to select the optimal model using the largest value. It is equal to 0.56, while the RMSE is 10.42. Similar to the appearance of the Lasso model, the elastic net model predictions fit with the observed values closer to the 1:1 line, and the residuals are much smaller than the PLS and Ridge models.  
+
+```{r}
+# Elastic Net Regression
+set.seed(525)
+elastic.model = train(x = train.p, y = train.r, method = "glmnet",
+                      trControl = trainControl("cv", number = 10),
+                      tuneLength = 10, metric = "Rsquared"
+                      )
+elastic.model$bestTune
+ggplot(elastic.model) + labs(title = "R-squared Error of Elastic Model") + theme(legend.position = "top")
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+p1 = xyplot(train.r ~ predict(elastic.model), type = c("p", "g"), 
+       main = "Predicted vs Observed", 
+       xlab = "Predicted", 
+       ylab = "Observed", 
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(lm(y ~ x))
+         })
+
+p2 = xyplot(resid(elastic.model) ~ predict(elastic.model), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+By conducting a resampling method, performance metrics were collected and analyzed to determine the model that best fits the training data. The results below suggest that the elastic net model had a mean $R^2$ = 0.56 from the 10 sample cross-validations. Additionally, the root mean squared error is also the smallest among the models, RMSE = 10.42. It can therefore be stated that the elastic net model best fitted the training data than the PLS, ridge, and LASSO models.
+
+```{r}
+set.seed(525)
+summary(resamples(list(pls = pls.model, ridge = ridge.model, lasso = lasso.model, elastic = elastic.model)))
+```
+
+Now, let's use the best model, i.e. elastic net model with alpha = 0.1 and lambda = 3.69 to make predictions with the test predictive variables and compare the accuracy to the actual test responses.
+
+```{r}
+accuracy = function(models, predictors, response){
+  acc = list()
+  i = 1
+  for (model in models){
+    predictions = predict(model, newdata = predictors)
+    acc[[i]] = postResample(pred = predictions, obs = response)
+    i = i + 1
+  }
+  names(acc) = c("pls", "ridge", "lasso", "elastic")
+  return(acc)
+}
+
+models = list(pls.model, ridge.model, lasso.model, elastic.model)
+accuracy(models, test.p, test.r)
+```
+
+From the results, it can be concluded that the elastic net model predicted the test response with the best accuracy. It has $R^2$ = 0.50 and RMSE = 12.45.
+
+###### (f)
+
+Would you recommend any of your models to replace the permeability laboratory experiment?
+
+Typically, for predicting physical processes, $R^2$ should be greater than 50%, as this only explains about 29% of the standard deviation. From the descriptive statistic, it is clear that the predictions are not as similar to the actual values. The predictive interval is smaller than what some of the actual values can be. Moreover, the predictions have a median of 10.19 whereas the actual data is 4.91. In conclusion, it is not recommended to use this model to replace the permeability laboratory experiment.
+
+```{r}
+rbind(actual = describe(permeability)[,-c(1,6,7)],
+      prediction = describe(predict(elastic.model, newdata = test.p))[,-c(1,6,7)])
+```
+
+### Exercise 6.3
+
+A chemical manufacturing process for a pharmaceutical product was discussed in Sect. 1.4. In this problem, the objective is to understand the relationship between biological measurements of the raw materials (predictors), measurements of the manufacturing process (predictors), and the response of product yield. Biological predictors cannot be changed but can be used to assess the quality of the raw material before processing. On the other hand, the manufacturing process predictors can be changed in the manufacturing process. Improving product yield by 1% will boost revenue by approximately one hundred thousand dollars per batch:
+
+###### (a) 
+
+Start R and use these commands to load the data:
+
+```{r}
+data(ChemicalManufacturingProcess)
+psych::describe(ChemicalManufacturingProcess)[,-c(1,5,6,10,13)] %>% 
+  kable()  %>% kable_styling(bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "300px")
+```
+
+The matrix `ChemicalManufacturingProcess` contains the 57 predictors (12 describing the input biological material and 45 describing the process predictors) for the 176 manufacturing runs. `yield` contains the percent yield for each run.
+
+The variable description highlights that some variables have less than n = 176, these are the variables with missing values that must be imputed. Moreover, they're quite a few variables that are heavily skewed, this suggests further transformation for normality is needed.
+
+###### (b) 
+
+A small percentage of cells in the predictor set contain missing values. Use an imputation function to fill in these missing values (e.g., see Sect. 3.8).
+
+Here is a plot of the portion of missing values per specific variable that needs imputation to make the set complete. 
+
+```{r}
+na.counts = as.data.frame(((sapply(ChemicalManufacturingProcess, 
+                                   function(x) sum(is.na(x))))/ nrow(ChemicalManufacturingProcess))*100)
+names(na.counts) = "counts"
+na.counts = cbind(variables = rownames(na.counts), data.frame(na.counts, row.names = NULL))
+
+na.counts[na.counts$counts > 0,] %>% arrange(counts) %>% mutate(name = factor(variables, levels = variables)) %>%
+  ggplot(aes(x = name, y = counts)) + geom_segment( aes(xend = name, yend = 0)) +
+  geom_point(size = 4, color = "steelblue2") + coord_flip() + theme_bw() +
+  labs(title = "Proportion of Missing Data", x = "Variables", y = "% of Missing data") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1))
+```
+
+Because these proportions are not too extreme for most of the variables, the imputation by k-Nearest Neighbor is conducted. The distance computation for defining the nearest neighbors is based on Gower distance (Gower, 1971), which can now handle distance variables of the type binary, categorical, ordered, continuous, and semi-continuous. As a result, the data set is now complete.
+
+```{r}
+pre.process = preProcess(ChemicalManufacturingProcess[, -c(1)], method = "knnImpute")
+chemical = predict(pre.process, ChemicalManufacturingProcess[, -c(1)])
+```
+
+###### (c) 
+
+Split the data into a training and a test set, pre-process the data, and tune a model of your choice from this chapter. What is the optimal value of the performance metric?
+
+Once again, to build a smaller model without predictors with extremely high correlations, it is best to reduce the number of predictors such that there are no absolute pairwise correlations above 0.90. The list below shows only significant correlations (at 5% level) for the top 10 highest correlations by the correlation coefficient. The results show that these ten have a perfect correlation of 1.  Afterward, the data is pre-processed to fulfill the assumption of normality using the Yeo-Johnson transformation (Yeo and Johnson, 2000). This technique attempts to find the value of lambda that minimizes the Kullback-Leibler distance between the normal distribution and the transformed distribution. This method has the advantage of working without having to worry about the domain of x. 
+
+```{r}
+corr = cor(chemical)
+corr[corr == 1] = NA 
+corr[abs(corr) < 0.85] = NA 
+corr = na.omit(reshape::melt(corr))
+head(corr[order(-abs(corr$value)),], 10)
+```
+
+```{r}
+tooHigh = findCorrelation(cor(chemical), 0.90)
+chemical = chemical[, -tooHigh]
+(pre.process = preProcess(chemical, method = c("YeoJohnson", "center", "scale")))
+chemical = predict(pre.process, chemical)
+```
+
+Next, the data is split into training and testing data in a ratio of 4:1, and an elastic net model is fitted.
+
+```{r}
+set.seed(525)
+intrain = createDataPartition(ChemicalManufacturingProcess$Yield, p = 0.8, list = FALSE)
+train.p = chemical[intrain, ]
+train.r = ChemicalManufacturingProcess$Yield[intrain]
+test.p = chemical[-intrain, ]
+test.r = ChemicalManufacturingProcess$Yield[-intrain]
+
+# Elastic Net Regression
+elastic.model = train(x = train.p, y = train.r, method = "glmnet",
+                      trControl = trainControl("cv", number = 10),
+                      tuneLength = 10, metric = "Rsquared"
+                      )
+elastic.model$bestTune
+ggplot(elastic.model) + labs(title = "R-squared Error of Elastic Model") + theme(legend.position = "top")
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+p1 = xyplot(train.r ~ predict(elastic.model), type = c("p", "g"), 
+       main = "Predicted vs Observed", 
+       xlab = "Predicted", 
+       ylab = "Observed", 
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(lm(y ~ x))
+         })
+
+p2 = xyplot(resid(elastic.model) ~ predict(elastic.model), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+From the elastic net model above, the best tune is with an alpha = 0.3 and lambda = 0.40 since $R^2$ was used to select the optimal model using the largest value. It is equal to 0.60, while the RMSE is 1.17. Moreover, from the plots with the predictions, the fit with the observed values is quite close to the 1:1 line, and the residuals are quite small. 
+
+```{r}
+data.frame(rsquared = elastic.model[["results"]][["Rsquared"]][as.numeric(rownames(elastic.model$bestTune))],
+           rmse = elastic.model[["results"]][["RMSE"]][as.numeric(rownames(elastic.model$bestTune))])
+```
+
+###### (d) 
+
+Predict the response for the test set. What is the value of the performance metric and how does this compare with the resampled performance metric on the training set?
+
+This example was particularly interesting because the splitting affected how well the model fit the test data. Using limited training data (< 80%) resulted in a very poor fit. The prediction result below suggests that the elastic net model has an $R^2$ = 0.71, this means that it accounts for nearly 71% of the variability in the testing data and explains almost 50% of the standard deviation, performing better than the training data. Additionally, the root mean squared error is also smaller, RMSE = 1.02. The basic statistical description suggests that the predictions are similar to that of the actual data. It can therefore be stated that the elastic net model fitted the training data well and produce reasonable predictions.
+
+```{r}
+prediction = predict(elastic.model, test.p)
+xyplot(test.r ~ prediction, type = c("p", "g"), 
+       main = "Predicted vs Observed", 
+       xlab = "Predicted", 
+       ylab = "Observed", 
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(lm(y ~ x))
+         })
+postResample(prediction, test.r)
+rbind(actual = describe(ChemicalManufacturingProcess$Yield)[,-c(1,6,7)],
+      prediction = describe(prediction)[,-c(1,6,7)])
+```
+
+###### (e) 
+
+Which predictors are most important in the model you have trained? Do either the biological or process predictors dominate the list?
+
+The top 20 most important variable out 47 is ranked below. The `caret::varImp` calculation of variable importance for regression is the relationship between each predictor and the outcome from a linear model fit and the $R^2$ statistic is calculated for this model against the intercept only null model. This number is returned as a relative measure of variable importance. The list shows that there are a few variables that are shrunk to zero, and the most contribution variable is `ManufacturingProcess32`. As a result, it shows that Manufacturing Processes dominate the list. 
+
+```{r}
+varImp(elastic.model)
+```
+
+From the model, the coefficients of each variable can explain the effect on the target variable. Here, it is clear why `ManufacturingProcess32` is the most important variable out of 47, because it has the largest, absolute coefficient.
+
+```{r}
+coeffs = coef(elastic.model$finalModel, elastic.model$bestTune$lambda)
+(var = data.frame(cbind(variables = coeffs@Dimnames[[1]][coeffs@i+1], coef = coeffs@x)))
+```
+
+###### (f) 
+
+Explore the relationships between each of the top predictors and the response. How could this information be helpful in improving yield in future runs of the manufacturing process?
+
+A positive coefficient indicates that as the value of the predictor increases, the mean of the response variable also tends to increase. A negative coefficient suggests that as the predictor increases, the response variable tends to decrease. The coefficient value signifies how much the mean of the `Yield` changes given a one-unit shift in the predictor variable while all other variables in the model are held constant. This property of holding the other variables constant is important because it allows for the assessment of the effect of each variable in isolation from the others.
+
+For the positive coefficients, `ManufacturingProcess32` improved the yield tremendously, and it also has the highest, positive correlation than the other variables in the model. The `ManufacturingProcess32` coefficient in the regression equation is 0.555. This coefficient represents the mean increase of the yield for every additional unit of `ManufacturingProcess32`. 
+```{r}
+var[var$coef > 0,]
+cor(ChemicalManufacturingProcess$Yield,
+    ChemicalManufacturingProcess$ManufacturingProcess32)
+```
+
+For the negative coefficients, `ManufacturingProcess13` improved the yield tremendously, and it also has the lowest correlation than the other variables in the model. The `ManufacturingProcess13` coefficient in the regression equation is -0.235. This coefficient represents the mean decrease of the yield for every additional unit of `ManufacturingProcess13`. 
+
+```{r}
+var[var$coef < 0,]
+cor(ChemicalManufacturingProcess$Yield,
+    ChemicalManufacturingProcess$ManufacturingProcess13)
+```
