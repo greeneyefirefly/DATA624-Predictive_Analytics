@@ -128,7 +128,7 @@ p2 = xyplot(resid(pls.model) ~ predict(pls.model), type = c("p", "g"),
 gridExtra::grid.arrange(p1, p2, ncol = 2)
 ```
 
-From the partial least squared model, the number of components which resulted in the smallest root mean squared error is 2. It has RMSE = 10.88, $R^2$ = 0.57, and MAE = 8.06. While it does account for the largest portion of the variability in the data than all other latent variables, it does not produce the smallest error. The number of components that produces the smallest error is 5, with RMSE = 10.40, $R^2$ = 0.56, and MAE = 8.14. 
+From the partial least squared model, the number of components which resulted in the smallest root mean squared error is 2. It has RMSE = 10.69, $R^2$ = 0.54, and MAE = 7.85. While it does account for the largest portion of the variability in the data than all other latent variables, it also produces the smallest error. Moreover, from the plots with the predictions, the fit with the observed values is a bit further from the 1:1 line, and the residuals are quite large.
 
 ###### (d) 
 
@@ -168,6 +168,8 @@ ridge.model = train(x = train.p, y = train.r, method = "glmnet",
                     tuneGrid = expand.grid(alpha = 0, lambda = lambda)
                     )
 ridge.model$bestTune
+data.frame(rsquared = ridge.model[["results"]][["Rsquared"]][as.numeric(rownames(ridge.model$bestTune))],
+           rmse = ridge.model[["results"]][["RMSE"]][as.numeric(rownames(ridge.model$bestTune))])
 plot(ridge.model, main = "R-squared Error of Ridge Model")
 ```
 
@@ -203,6 +205,8 @@ lasso.model = train(x = train.p, y = train.r, method = "glmnet",
                     tuneGrid = expand.grid(alpha = 1, lambda = lambda)
                     )
 lasso.model$bestTune
+data.frame(rsquared = lasso.model[["results"]][["Rsquared"]][as.numeric(rownames(lasso.model$bestTune))],
+           rmse = lasso.model[["results"]][["RMSE"]][as.numeric(rownames(lasso.model$bestTune))])
 plot(lasso.model, main = "R-squared Error of LASSO Model")
 ```
 
@@ -237,6 +241,8 @@ elastic.model = train(x = train.p, y = train.r, method = "glmnet",
                       tuneLength = 10, metric = "Rsquared"
                       )
 elastic.model$bestTune
+data.frame(rsquared = elastic.model[["results"]][["Rsquared"]][as.numeric(rownames(elastic.model$bestTune))],
+           rmse = elastic.model[["results"]][["RMSE"]][as.numeric(rownames(elastic.model$bestTune))])
 ggplot(elastic.model) + labs(title = "R-squared Error of Elastic Model") + theme(legend.position = "top")
 ```
 
@@ -300,6 +306,8 @@ rbind(actual = describe(permeability)[,-c(1,6,7)],
       prediction = describe(predict(elastic.model, newdata = test.p))[,-c(1,6,7)])
 ```
 
+
+
 ### Exercise 6.3
 
 A chemical manufacturing process for a pharmaceutical product was discussed in Sect. 1.4. In this problem, the objective is to understand the relationship between biological measurements of the raw materials (predictors), measurements of the manufacturing process (predictors), and the response of product yield. Biological predictors cannot be changed but can be used to assess the quality of the raw material before processing. On the other hand, the manufacturing process predictors can be changed in the manufacturing process. Improving product yield by 1% will boost revenue by approximately one hundred thousand dollars per batch:
@@ -314,6 +322,7 @@ psych::describe(ChemicalManufacturingProcess)[,-c(1,5,6,10,13)] %>%
   kable()  %>% kable_styling(bootstrap_options = "striped") %>%
   scroll_box(width = "100%", height = "300px")
 ```
+
 
 The matrix `ChemicalManufacturingProcess` contains the 57 predictors (12 describing the input biological material and 45 describing the process predictors) for the 176 manufacturing runs. `yield` contains the percent yield for each run.
 
@@ -413,6 +422,7 @@ data.frame(rsquared = elastic.model[["results"]][["Rsquared"]][as.numeric(rownam
            rmse = elastic.model[["results"]][["RMSE"]][as.numeric(rownames(elastic.model$bestTune))])
 ```
 
+
 ###### (d) 
 
 Predict the response for the test set. What is the value of the performance metric and how does this compare with the resampled performance metric on the training set?
@@ -471,3 +481,4 @@ var[var$coef < 0,]
 cor(ChemicalManufacturingProcess$Yield,
     ChemicalManufacturingProcess$ManufacturingProcess13)
 ```
+
