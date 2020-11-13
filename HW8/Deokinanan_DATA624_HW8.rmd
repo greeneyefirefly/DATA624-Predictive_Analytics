@@ -1,0 +1,512 @@
+---
+title: " CUNY MSDS DATA 624 HW #8"
+author: "Samantha Deokinanan"
+date: "November 8, 2020"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: pygments
+---
+
+*Textbook: Max Kuhn and Kjell Johnson. Applied Predictive Modeling. Springer, New York, 2013.*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center", fig.height = 5, fig.width = 8, message = FALSE, warning = FALSE)
+```
+
+```{r}
+# Required R packages
+library(tidyverse)
+library(AppliedPredictiveModeling)
+library(mlbench)
+library(caret)
+```
+
+### Exercise 7.2 
+
+Friedman (1991) introduced several benchmark data sets create by simulation. One of these simulations used the following nonlinear equation to create data:
+
+\[y = 10 sin(\pi x_1x_2) + 20(x_3 − 0.5)^2 + 10x_4 + 5x_5 + N(0, \sigma^2)\]
+
+where the x values are random variables uniformly distributed between [0, 1] (there are also 5 other non-informative variables also created in the simulation). The package `mlbench` contains a function called `mlbench.friedman1` that
+simulates these data: 
+
+```{r}
+set.seed(200)
+trainingData = mlbench.friedman1(200, sd = 1)
+## We convert the 'x' data from a matrix to a data frame
+## One reason is that this will give the columns names.
+trainingData$x = data.frame(trainingData$x)
+## Look at the data using
+featurePlot(trainingData$x, trainingData$y)
+## or other methods.
+
+## This creates a list with a vector 'y' and a matrix
+## of predictors 'x'. Also simulate a large test set to
+## estimate the true error rate with good precision:
+testData = mlbench.friedman1(5000, sd = 1)
+testData$x = data.frame(testData$x)
+```
+
+
+#### Models {.tabset .tabset-fade .tabset.-pills}
+
+Tune several models on these data.
+
+##### K-Nearest Neighbors (KNN)
+
+K-Nearest Neighbor classification works such that for each row of the test set, the k nearest (in Euclidean distance) training set vectors are found, and the classification is decided by majority vote, with ties broken at random. 
+
+```{r}
+set.seed(525)
+knnModel = train(x = trainingData$x, 
+                 y = trainingData$y,
+                 method = "knn",
+                 preProc = c("center", "scale"),
+                 tuneLength = 10,
+                 trControl = trainControl(method = "cv"))
+```
+
+```{r}
+knnModel
+
+knnModel$bestTune
+
+data.frame(rsquared = knnModel[["results"]][["Rsquared"]][as.numeric(rownames(knnModel$bestTune))],
+           rmse = knnModel[["results"]][["RMSE"]][as.numeric(rownames(knnModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(knnModel, main = "RMSE of KNN Model")
+
+p1 = plot(varImp(knnModel), main = "Rank of Most Important Variable")
+
+p2 = xyplot(resid(knnModel) ~ predict(knnModel), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+The best tune for the KNN model which resulted in the smallest root mean squared error is 11. It has RMSE = 2.99, and $R^2$ = 0.70. While it does not account for the largest portion of the variability in the data than all other latent variables, it produces the smallest error. Moreover, the residuals are quite large and the top informative predictors are X4, X1, X2, X5, X3, and a few more.
+
+##### Support Vector Machines (SVM)
+
+Support vector machines carry out general regression and classification (of nu and epsilon-type), as well as density-estimation. The goal of an SVM is to take groups of observations and construct boundaries to predict which group future observations belong to based on their measurements.
+
+```{r}
+set.seed(525)
+svmModel = train(x = trainingData$x, 
+                 y = trainingData$y,
+                 method = "svmRadial",
+                 preProc = c("center", "scale"),
+                 tuneLength = 14,
+                 trControl = trainControl(method = "cv"))
+```
+
+```{r}
+svmModel
+
+svmModel$bestTune
+
+data.frame(rsquared = svmModel[["results"]][["Rsquared"]][as.numeric(rownames(svmModel$bestTune))],
+           rmse = svmModel[["results"]][["RMSE"]][as.numeric(rownames(svmModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+p1 = plot(svmModel, main = "RMSE of SVM Model", xlim = c(0, 25))
+
+p2 = plot(varImp(svmModel), main = "Rank of Most Important Variable")
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the SVM model which resulted in the smallest root mean squared error is 8. The tuning parameter 'sigma' was held constant at a value of 0.070. It has RMSE = 1.85, and $R^2$ = 0.860. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error. Moreover, the top informative predictors are X4, X1, X2, X5, X3, and a few more.
+
+##### Multivariate Adaptive Regression Splines (MARS)
+
+MARS is an algorithm that essentially creates a piecewise linear model which provides an intuitive stepping block into non-linearity after grasping the concept of linear regression and other intrinsically linear models. Two tuning parameters associated with the MARS model is done to identify the optimal combination of these hyperparameters that minimize prediction error.
+
+```{r}
+set.seed(525)
+marsGrid = expand.grid(.degree = 1:2, .nprune = 2:38) 
+marsModel = train(x = trainingData$x, 
+                  y = trainingData$y, 
+                  method = "earth", 
+                  tuneGrid = marsGrid, 
+                  trControl = trainControl(method = "cv", 
+                                           number = 10))
+```
+
+```{r}
+marsModel$bestTune
+
+data.frame(rsquared = marsModel[["results"]][["Rsquared"]][as.numeric(rownames(marsModel$bestTune))],
+           rmse = marsModel[["results"]][["RMSE"]][as.numeric(rownames(marsModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(marsModel, main = "RMSE of MARS Model")
+
+p1 = plot(varImp(marsModel), main = "Rank of Most Important Variable")
+
+p2 = xyplot(resid(marsModel) ~ predict(marsModel), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the MARS model which resulted in the smallest root mean squared error is with 2 degrees of interactions and the number of retained terms of 12. It has RMSE = 1.27, and $R^2$ = 0.933. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error. Moreover, the top informative predictors are X1, X4, X2, and X5, less than before two models. The residuals are also smaller than the KNN model.
+
+##### Neural Networks (NNET)
+
+Neural Networks are a machine learning framework that attempts to mimic the learning pattern of natural biological neural networks. As with MARS, tuning is done by creating a specific candidate set of models to evaluate.
+
+```{r}
+set.seed(525)
+nnetGrid = expand.grid(decay = c(0, 0.01, .1), 
+                       size = c(1:10), bag = FALSE) 
+
+nnetModel = train(x = trainingData$x, 
+                  y = trainingData$y,  
+                  method = "avNNet",  
+                  tuneGrid = nnetGrid,  
+                  trControl = trainControl(method = "cv", 
+                                           number = 10),
+                  preProc = c("center", "scale"),  
+                  linout = TRUE,  trace = FALSE,  
+                  MaxNWts = 10 * (ncol(trainingData$x) + 1) + 10 + 1, 
+                  maxit = 500)
+```
+
+```{r}
+nnetModel$bestTune
+
+data.frame(rsquared = nnetModel[["results"]][["Rsquared"]][as.numeric(rownames(nnetModel$bestTune))],
+           rmse = nnetModel[["results"]][["RMSE"]][as.numeric(rownames(nnetModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(nnetModel, main = "RMSE of NNET Model")
+
+p1 = plot(varImp(nnetModel), main = "Rank of Most Important Variable")
+
+p2 = xyplot(resid(nnetModel) ~ predict(nnetModel), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the NNET model which resulted in the smallest root mean squared error is with the number of units in the hidden layer being 4 and the regularization parameter to avoid over-fitting is 0. It has RMSE = 2.46, and $R^2$ = 0.750. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error. Moreover, the top informative predictors are X4, X1, X2, X5, X3, and a few more. The residuals are also somewhat larger than the MARS model.
+
+Which models appear to give the best performance? Does MARS select the informative predictors (those named X1–X5)?
+
+```{r}
+set.seed(525)
+knnPred = predict(knnModel, newdata = testData$x)
+svmRadialPred = predict(svmModel, newdata = testData$x)
+marsPred = predict(marsModel, newdata = testData$x)
+nnetPred = predict(nnetModel, newdata = testData$x)
+
+data.frame(rbind(KNN = postResample(pred = knnPred, obs = testData$y),
+                 SVM = postResample(pred = svmRadialPred, obs = testData$y),
+                 MARS = postResample(pred = marsPred, obs = testData$y),
+                 NNET = postResample(pred = nnetPred, obs = testData$y)))
+```
+From the results above, it suggests that the MARS model had a explain a larger portion of the variability with X1-X5 informative predictors. It resulted in a root mean squared error that is the smallest among the models with the test data, RMSE = 1.28. It can therefore be stated that the Multivariate Adaptive Regression Splines model best fitted the training data than the K-Nearest Neighbors, Support Vector Machines, and Neural Networks models.
+
+### Exercise 7.5
+
+Exercise 6.3 describes data for a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several nonlinear regression models.
+
+From Home Work #6, the matrix `ChemicalManufacturingProcess` containing the 57 predictors (12 describing the input biological material and 45 describing the process predictors) for the 176 manufacturing runs was used. 
+
+The variable description highlights that some variables have less than n = 176, these are the variables with missing values that must be imputed. Moreover, they’re quite a few variables that are heavily skewed, this suggests further transformation for normality is needed.
+
+```{r}
+data(ChemicalManufacturingProcess)
+psych::describe(ChemicalManufacturingProcess)[,-c(1,5,6,10,13)] %>% 
+  knitr::kable()  %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped") %>%
+  kableExtra::scroll_box(width = "100%", height = "300px")
+```
+
+A small percentage of cells in the predictor set contain missing values. Because these proportions are not too extreme for most of the variables, the imputation by k-Nearest Neighbor is conducted. The distance computation for defining the nearest neighbors is based on Gower distance (Gower, 1971), which can now handle distance variables of the type binary, categorical, ordered, continuous, and semi-continuous. As a result, the data set is now complete.
+
+```{r}
+pre.process = preProcess(ChemicalManufacturingProcess[, -c(1)], method = "knnImpute")
+chemical = predict(pre.process, ChemicalManufacturingProcess[, -c(1)])
+```
+
+To build a smaller model without predictors with extremely high correlations, it is best to reduce the number of predictors such that there are no absolute pairwise correlations above 0.90. The list below shows only significant correlations (at 5% level) for the top 10 highest correlations by the correlation coefficient. The results show that these ten have a perfect correlation of 1.  Afterward, the data is pre-processed to fulfill the assumption of normality using the Yeo-Johnson transformation ([Yeo & Johnson, 2000](https://www.jstor.org/stable/2673623?seq=1)). This technique attempts to find the value of lambda that minimizes the Kullback-Leibler distance between the normal distribution and the transformed distribution. This method has the advantage of working without having to worry about the domain of x. 
+
+```{r}
+corr = cor(chemical)
+corr[corr == 1] = NA 
+corr[abs(corr) < 0.85] = NA 
+corr = na.omit(reshape::melt(corr))
+head(corr[order(-abs(corr$value)),], 10)
+```
+
+```{r}
+tooHigh = findCorrelation(cor(chemical), 0.90)
+chemical = chemical[, -tooHigh]
+(pre.process = preProcess(chemical, method = c("YeoJohnson", "center", "scale")))
+chemical = predict(pre.process, chemical)
+```
+
+Next, the data is split into training and testing data in a ratio of 4:1, and an elastic net model is fitted.
+
+```{r}
+set.seed(525)
+intrain = createDataPartition(ChemicalManufacturingProcess$Yield, p = 0.8, list = FALSE)
+train.p = chemical[intrain, ]
+train.r = ChemicalManufacturingProcess$Yield[intrain]
+test.p = chemical[-intrain, ]
+test.r = ChemicalManufacturingProcess$Yield[-intrain]
+```
+
+(a) Which nonlinear regression model gives the optimal resampling and test set performance?
+
+#### Models {.tabset .tabset-fade .tabset.-pills}
+##### K-Nearest Neighbors (KNN)
+
+```{r}
+set.seed(525)
+knnModel = train(x = train.p, 
+                 y = train.r,
+                 method = "knn",
+                 preProc = c("center", "scale"),
+                 tuneLength = 10,
+                 trControl = trainControl(method = "cv"))
+```
+
+```{r}
+knnModel
+
+knnModel$bestTune
+
+data.frame(rsquared = knnModel[["results"]][["Rsquared"]][as.numeric(rownames(knnModel$bestTune))],
+           rmse = knnModel[["results"]][["RMSE"]][as.numeric(rownames(knnModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(knnModel, main = "RMSE of KNN Model")
+
+p1 = plot(varImp(knnModel), top = 10, main = "Top 10 Most Important Variable")
+
+p2 = xyplot(resid(knnModel) ~ predict(knnModel), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+The best tune for the KNN model which resulted in the smallest root mean squared error is 5 It has RMSE = 1.30, and $R^2$ = 0.52. This model accounts for the largest portion of the variability in the data than all other latent variables, as well as produces the smallest error. Moreover, the residuals are quite small and there are quite a few top informative predictors over 70%.
+
+##### Support Vector Machines (SVM)
+
+```{r}
+set.seed(525)
+svmModel = train(x = train.p, 
+                 y = train.r,
+                 method = "svmRadial",
+                 preProc = c("center", "scale"),
+                 tuneLength = 14,
+                 trControl = trainControl(method = "cv"))
+```
+
+```{r}
+svmModel
+
+svmModel$bestTune
+
+data.frame(rsquared = svmModel[["results"]][["Rsquared"]][as.numeric(rownames(svmModel$bestTune))],
+           rmse = svmModel[["results"]][["RMSE"]][as.numeric(rownames(svmModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+p1 = plot(svmModel, main = "RMSE of SVM Model", xlim = c(0, 25))
+
+p2 = plot(varImp(svmModel), top = 10, main = "Top 10 Most Important Variable")
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the SVM model which resulted in the smallest root mean squared error is 16. The tuning parameter 'sigma' was held constant at a value of 0.013. It has RMSE = 1.09, and $R^2$ = 0.62. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error. Moreover, with it's slightly improved fit than KNN, the top informative predictors and residual are quite similar.
+
+##### Multivariate Adaptive Regression Splines (MARS)
+
+```{r}
+set.seed(525)
+marsGrid = expand.grid(.degree = 1:2, .nprune = 2:38) 
+marsModel = train(x = train.p, 
+                  y = train.r, 
+                  method = "earth", 
+                  tuneGrid = marsGrid, 
+                  trControl = trainControl(method = "cv", 
+                                           number = 10))
+```
+
+```{r}
+marsModel$bestTune
+
+data.frame(rsquared = marsModel[["results"]][["Rsquared"]][as.numeric(rownames(marsModel$bestTune))],
+           rmse = marsModel[["results"]][["RMSE"]][as.numeric(rownames(marsModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(marsModel, main = "RMSE of MARS Model")
+
+p1 = plot(varImp(marsModel), top = 10, main = "Top 10 Most Important Variable")
+
+p2 = xyplot(resid(marsModel) ~ predict(marsModel), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the MARS model which resulted in the smallest root mean squared error is with 1 degree of interactions and the number of retained terms of 3 It has RMSE = 1.40, and $R^2$ = 0.43. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error. Moreover, there are only 3 top informative predictors, less than two models before. The residuals are a bit larger than the two models.
+
+##### Neural Networks (NNET)
+
+```{r}
+set.seed(525)
+nnetGrid = expand.grid(decay = c(0, 0.01, .1), 
+                       size = c(1,5,10), bag = FALSE) 
+
+nnetModel = train(x = train.p, 
+                  y = train.r, 
+                  method = "avNNet",  
+                  tuneGrid = nnetGrid,  
+                  trControl = trainControl(method = "cv", 
+                                           number = 10),
+                  preProc = c("center", "scale"),  
+                  linout = TRUE,  trace = FALSE, 
+                  maxit = 10)
+```
+
+```{r}
+nnetModel$bestTune
+
+data.frame(rsquared = nnetModel[["results"]][["Rsquared"]][as.numeric(rownames(nnetModel$bestTune))],
+           rmse = nnetModel[["results"]][["RMSE"]][as.numeric(rownames(nnetModel$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(nnetModel, main = "RMSE of NNET Model")
+
+p1 = plot(varImp(nnetModel), top = 10, main = "Top 10 Most Important Variable")
+
+p2 = xyplot(resid(nnetModel) ~ predict(nnetModel), type = c("p", "g"), 
+       main = " Predicted vs Residuals", 
+       xlab = "Predicted", 
+       ylab = "Residuals",
+       panel = function(x, y) {
+         panel.xyplot(x, y)
+         panel.abline(h = 0)
+       })
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the NNET model which resulted in the smallest root mean squared error is with the number of units in the hidden layer being 5 and the regularization parameter to avoid over-fitting is 0.01. It has RMSE = 1.66, and $R^2$ = 0.42. In this case, it does account for the largest portion of the variability in the data than all other variables, even though that is only 42%, and it produces the smallest error. Moreover, there a few top informative predictors, and the residuals are also somewhat larger than the previous models.
+
+##### Resampling 
+
+By conducting a resampling method, performance metrics were collected and analyzed to determine the model that best fits the training data. The results below suggest that the SVM model had the largest mean $R^2$ = 0.62 from the 10 sample cross-validations. In fact, the SVM model also produced the smallest errors, RMSE = 1.09. It can therefore be stated that the SVM model best fitted the training data than the KNN, MARS, and NNET models.
+
+```{r}
+set.seed(525)
+summary(resamples(list(knn = knnModel, svm = svmModel, mars = marsModel, nnet = nnetModel)))
+```
+
+Now, let’s use the best model to make predictions with the test predictive variables and compare the accuracy to the actual test responses.
+
+```{r}
+accuracy = function(models, predictors, response){
+  acc = list()
+  i = 1
+  for (model in models){
+    predictions = predict(model, newdata = predictors)
+    acc[[i]] = postResample(pred = predictions, obs = response)
+    i = i + 1
+  }
+  names(acc) = c("knn", "svm", "mars", "nnet")
+  return(acc)
+}
+
+models = list(knnModel, svmModel, marsModel, nnetModel)
+accuracy(models, test.p, test.r)
+```
+
+From the results, it can be concluded that the SVM model predicted the test response with the best accuracy. It has $R^2$ = 0.76 and RMSE = 0.91.
+
+(b) Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the list? How do the top ten important predictors compare to the top ten predictors from the optimal linear model?
+
+The top 20 most important variable out 47 is ranked below. The `caret::varImp` calculation of variable importance for regression is the relationship between each predictor and the outcome from a linear model fit and the $R^2$ statistic is calculated for this model against the intercept only null model. This number is returned as a relative measure of variable importance. The list shows that there are a few variables that are shrunk to zero, and the most contribution variable is `ManufacturingProcess32.` As a result, it shows that Manufacturing Processes dominate the list.
+
+```{r}
+(svm.v = varImp(svmModel))
+```
+
+It was the elastic net linear model that best fitted the data, and it only needed 15 variables of the 47. While Manufacturing Processes still dominated the list, their ranks are different than those compared to the nonlinear model.
+
+```{r}
+# Elastic Net Regression
+elastic.model = train(x = train.p, y = train.r, method = "glmnet",
+                      trControl = trainControl("cv", number = 10),
+                      tuneLength = 10, metric = "Rsquared"
+                      )
+```
+```{r}
+varImp(elastic.model)
+```
+
+(c) Explore the relationships between the top predictors and the response for the predictors that are unique to the optimal nonlinear regression model. Do these plots reveal intuition about the biological or process predictors and their relationship with yield?
+
+From the plots below, it is apparent that each manufacturing process and biological material have a different fit with yield. Looking at the slope of the linear line, increasing some features will most likely increase the yield, e.g. `ManufacturingProcess32` and `BiologicalMaterial06`. While increase others will decrease the yield, e.g. `ManufacturingProcess13`.
+
+
+```{r fig.height=15}
+temp = svm.v$importance
+temp$predictor = row.names(temp)
+temp = temp[order(temp$Overall, decreasing = TRUE),]
+variables = row.names(temp[1:10,])
+
+par(mfrow = c(5,2))
+
+for (i in 1:10){
+  x = ChemicalManufacturingProcess[, variables[i]]
+  y = ChemicalManufacturingProcess$Yield
+  plot(x, y, xlab = variables[i], ylab = 'Yield')
+  abline(lm(y~x))
+}
+```
+```{r}
+cor(train.p[,variables], train.r)
+```
+
+For the positive coefficients, `ManufacturingProcess32` improved the yield tremendously, and it also has the highest, positive correlation than the other variables in the model. The `ManufacturingProcess32` coefficient in the regression equation is 0.59. This coefficient represents the mean increase of the yield for every additional unit of `ManufacturingProcess32.` For the negative coefficients, `ManufacturingProcess13` improved the yield tremendously, and it also has the lowest correlation than the other variables in the model. The `ManufacturingProcess13` coefficient in the regression equation is -0.52. This coefficient represents the mean decrease of the yield for every additional unit of `ManufacturingProcess13`.
