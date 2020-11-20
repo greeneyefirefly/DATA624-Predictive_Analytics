@@ -1,0 +1,424 @@
+---
+title: " CUNY MSDS DATA 624 HW #9"
+author: "Samantha Deokinanan"
+date: "November 22, 2020"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: pygments
+---
+
+*Textbook: Max Kuhn and Kjell Johnson. Applied Predictive Modeling. Springer, New York, 2013.*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center", fig.height = 5, fig.width = 8, message = FALSE, warning = FALSE)
+```
+
+```{r}
+# Required R packages
+library(tidyverse)
+library(mlbench)
+library(randomForest)
+library(caret)
+library(party)
+library(kableExtra)
+```
+
+### Exercise 8.1
+
+Recreate the simulated data from Exercise 7.2:
+
+```{r}
+set.seed(200)
+simulated = mlbench.friedman1(200, sd = 1)
+simulated = cbind(simulated$x, simulated$y)
+simulated = as.data.frame(simulated)
+colnames(simulated)[ncol(simulated)] = "y"
+```
+
+(a) Fit a random forest model to all of the predictors, then estimate the variable importance scores:
+
+```{r}
+model1 = randomForest(y ~ ., data = simulated, importance = TRUE, ntree = 1000)
+rfImp1 = varImp(model1, scale = FALSE)
+```
+
+Did the random forest model significantly use the uninformative predictors (V6 – V10)?
+
+```{r}
+rfImp1
+```
+
+Based on the proportion results above, the random forest model did not significantly use the uninformative predictors.
+
+(b) Now add an additional predictor that is highly correlated with one of the informative predictors. For example:
+
+```{r}
+set.seed(525)
+simulated$duplicate1 = simulated$V1 + rnorm(200) * .1
+cor(simulated$duplicate1, simulated$V1)
+```
+
+Fit another random forest model to these data. Did the importance score for V1 change? What happens when you add another predictor that is also highly correlated with V1?
+
+```{r}
+model2 = randomForest(y ~ ., data = simulated, importance = TRUE, ntree = 1000)
+rfImp2 = varImp(model2, scale = FALSE)
+rfImp2
+```
+
+After adding another predictor that is highly correlated with V1, its importance was reduced. The importance of V1 dropped by nearly half. This is a result of the splitting between V1 and newly correlated variables, and the choice of which to use in a split is somewhat random. Each is used in the tree and the small difference in influencing the choice between the two. As a result, more predictors may be selected than needed, and the variable importance values are affected. 
+
+(c) Use the `cforest` function in the `party` package to fit a random forest model using conditional inference trees. The `party` package function `varimp` can calculate predictor importance. The conditional argument of that function toggles between the traditional importance measure and the modified version described in Strobl et al. (2007). Does this importance show the same pattern as the traditional random forest model?
+
+```{r}
+model3 = cforest(y ~ ., data = simulated)
+
+# Conditional variable importance
+cfImp3 = varimp(model3, conditional = TRUE)
+
+# Un-conditional variable importance
+cfImp4 = varimp(model3, conditional = FALSE)
+```
+
+```{r}
+as.data.frame(cbind(Model2 = rfImp2, Condition = cfImp3, Uncondition = cfImp4))
+```
+
+The importance of the conditional set is different from the traditional random forest model. When variable importance is calculated conditionally, the correlation between variable V1 and duplicate1 is considered and the importance is adjusted accordingly than with the uncondition and traditional model. However, regardless of the model, the uninformative predictors are still low ranked and the importance of other predictors, for example, V4, is still the most important variable. But the correlated variables can be misleading with the traditional and unconditional set.
+
+(d) Repeat this process with different tree models, such as boosted trees and Cubist. Does the same pattern occur?
+
+```{r}
+# boosting regression trees via stochastic gradient boosting machines
+library(gbm)
+gbmGrid = expand.grid(interaction.depth = seq(1,5, by=2), 
+                      n.trees = seq(100, 1000, by = 100), 
+                      shrinkage = 0.1, 
+                      n.minobsinnode = 5)
+gbm.model = train(y ~ ., data = simulated, 
+                  tuneGrid = gbmGrid, verbose = FALSE, 
+                  method = 'gbm')
+
+# Variable importance
+gbm.Imp3 = varImp(gbm.model)
+```
+
+```{r}
+# Cubist
+library(Cubist)
+cubist.model = cubist(x = simulated[, names(simulated)[names(simulated) != 'y']], 
+                 y = simulated[,c('y')])
+
+# Variable importance
+cube.Imp3 = varImp(cubist.model)
+```
+
+```{r}
+df = as.data.frame(cbind(cfImp4, cfImp3, gbm.Imp3$importance, cube.Imp3))
+names(df) = c("cf.uncond", "cf.cond", "boosted", "cubist")
+df
+```
+
+When comparing the results, like with `cforest`, the uninformative predictors `V6` - `V10` are still ranked among the lowest, while `V4` is still the specific top predictor for the boosted trees. Moreover, it deemed `V1` as more important than `duplicated1.` This is because the trees from boosting are dependent on each other and will have correlated structures. Whereas for Cubist, the result is different than both the random forest and boosted trees models. Nonetheless, the Cubist model ranked `V1` higher than `duplicated1` similar to the boosted trees model.
+
+### Exercise 8.2
+
+Use a simulation to show tree bias with different granularities.
+
+Tree models have an increased bias is for highly granular data such that the predictors with a higher number of distinct values are favored over more granular predictors.
+
+Below are 5 simulated variables with distinct granularity. It is built such that `v1` will have higher importance because it possesses the lowest granularity. The response variable is then a summation function of `v1` and `v4` (chosen at random), with some noise. 
+
+```{r}
+set.seed(525)
+df = data.frame(v1 = sample(1:5000 / 5000, 252, replace = TRUE), # 5000 distinct values
+                v2 = sample(1:50 / 50, 252, replace = TRUE),     # 50 distinct values
+                v3 = sample(1:500 / 500, 252, replace = TRUE),   # 500 distinct values
+                v4 = sample(1:5 / 5, 252, replace = TRUE),       # 5 distinct values
+                v5 = rep(1, 252))                                # no distinct values
+df$y = df$v1 + df$v4 + rnorm(252)
+head(df)
+```
+
+As expected, `v1`, with the most granularity, is the most important variable among the variables, followed by `v3`, `v2` then `v4`. Notice that `v5`, with no distinct value, is not deemed an important variable at all. Therefore, this simulation highlights that there is a selection bias in the tree model where predictors with more distinct values are favored.
+
+```{r}
+library(rpart)
+rpart.model = rpart(y ~ ., data = df)
+varImp(rpart.model)
+```
+
+### Exercise 8.3
+
+In stochastic gradient boosting, the bagging fraction and learning rate will govern the construction of the trees as they are guided by the gradient. Although the optimal values of these parameters should be obtained through the tuning process, it is helpful to understand how the magnitudes of these parameters affect the magnitudes of variable importance. 
+
+![](C:/Users/Deokinanan/OneDrive - CUNY School of Professional Studies/2019 -2021 CUNY SPS/FALL 2020/DATA 624/WEEK 12 - 13/8.3.png)
+
+Figure 8.24 provides the variable importance plots for boosting using two extreme values for the bagging fraction (0.1 and 0.9) and the learning rate (0.1 and 0.9) for the solubility data. The left-hand plot has both parameters set to 0.1, and the right-hand plot has both set to 0.9:
+
+(a) Why does the model on the right focus its importance on just the first few predictors, whereas the model on the left spreads importance across more predictors?
+
+Gradient boosting is a technique used creating for prediction models in the form of decision trees. Regularization reduces overfitting effects and is aided by the learning rate and bagging rate. The use of learning rates below 0.1 produces improvements that are significant in the generalization of a model. Moreover, bagging is the proportion of the data that is utilized for each iteration. When the values are small, the algorithm experiences randomness, which reduces the chances of overfitting. 
+
+Therefore, from the graphs, the plot on the right focuses on a few variables because there is a higher learning rate with a higher bagging rate. This means that there is a larger portion of the data used, increasing the correlation structure each iteration. Thus, only a few variables are considered important. Whereas, the plot of the left, having a lower learning rate and bagging rate, results in a model that has a more diverse importance rank on its variables. In this case, a small portion of the data is used to train the model and it is less dependent on each iteration. Thus, the variable importance plots for boosting using two extreme values for the bagging fraction and the learning rate are quite different.
+
+(b) Which model do you think would be more predictive of other samples?
+
+Following the reasons stated above, it is more likely that the model with the smaller learning and bagging rate will have better and generalized predictability. The other model with the larger learning and bagging rates will most likely overfit. 
+
+(c) How would increasing interaction depth affect the slope of predictor importance for either model in Fig. 8.24?
+
+Increasing interaction depth, or tree depth, would result in the inclusion of more predictors, which would further result in the importance score to be distributed out. Thus, the slope of the predictor importance would become flatten. 
+
+### Exercise 8.7
+
+Refer to Exercises 6.3 and 7.5 which describe a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several tree-based models:
+
+From Home Work #7 and #8, the matrix `ChemicalManufacturingProcess` containing the 57 predictors (12 describing the input biological material and 45 describing the process predictors) for the 176 manufacturing runs was used. 
+
+The variable description highlights that some variables have less than n = 176, these are the variables with missing values that must be imputed. Moreover, they’re quite a few variables that are heavily skewed, this suggests further transformation for normality is needed.
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+psych::describe(ChemicalManufacturingProcess)[,-c(1,5,6,10,13)] %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = "striped") %>%
+  scroll_box(width = "100%", height = "300px")
+```
+
+A small percentage of cells in the predictor set contain missing values. Because these proportions are not too extreme for most of the variables, the imputation by k-Nearest Neighbor is conducted. The distance computation for defining the nearest neighbors is based on Gower distance (Gower, 1971), which can now handle distance variables of the type binary, categorical, ordered, continuous, and semi-continuous. As a result, the data set is now complete.
+
+```{r}
+pre.process = preProcess(ChemicalManufacturingProcess[, -c(1)], method = "knnImpute")
+chemical = predict(pre.process, ChemicalManufacturingProcess[, -c(1)])
+```
+
+To build a smaller model without predictors with extremely high correlations, it is best to reduce the number of predictors such that there are no absolute pairwise correlations above 0.90. The list below shows only significant correlations (at a 5% level) for the top 10 highest correlations by the correlation coefficient. The results show that these ten have a perfect correlation of 1. Afterward, the data is pre-processed to fulfill the assumption of normality using the Yeo-Johnson transformation ([Yeo & Johnson, 2000](https://www.jstor.org/stable/2673623?seq=1)). This technique attempts to find the value of lambda that minimizes the Kullback-Leibler distance between the normal distribution and the transformed distribution. This method has the advantage of working without having to worry about the domain of x. 
+
+```{r}
+corr = cor(chemical)
+corr[corr == 1] = NA 
+corr[abs(corr) < 0.85] = NA 
+corr = na.omit(reshape::melt(corr))
+head(corr[order(-abs(corr$value)),], 10)
+```
+
+```{r}
+tooHigh = findCorrelation(cor(chemical), 0.90)
+chemical = chemical[, -tooHigh]
+(pre.process = preProcess(chemical, method = c("YeoJohnson", "center", "scale")))
+chemical = predict(pre.process, chemical)
+```
+
+Next, the data is split into training and testing data in a ratio of 4:1, and an elastic net model is fitted.
+
+```{r}
+set.seed(525)
+intrain = createDataPartition(ChemicalManufacturingProcess$Yield, p = 0.8, list = FALSE)
+train.p = chemical[intrain, ]
+train.r = ChemicalManufacturingProcess$Yield[intrain]
+test.p = chemical[-intrain, ]
+test.r = ChemicalManufacturingProcess$Yield[-intrain]
+```
+
+#### Tree Models {.tabset .tabset-fade .tabset.-pills}
+
+There will be 4 tree model and the RMSE is used to determine the best fit.
+
+##### Single Tree
+
+A single tree is used to create a single regression tree. 
+
+```{r}
+set.seed(525)
+sig.model = train(x = train.p,
+                  y = train.r,
+                  method = "rpart",
+                  tuneLength = 10,
+                  control = rpart.control(maxdepth=2),
+                  trControl = trainControl(method = "cv", 
+                                           repeats = 5))
+```
+```{r}
+sig.model$bestTune
+
+data.frame(rsquared = sig.model[["results"]][["Rsquared"]][as.numeric(rownames(sig.model$bestTune))],
+           rmse = sig.model[["results"]][["RMSE"]][as.numeric(rownames(sig.model$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(sig.model, main = "RMSE of Single Tree Model")
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the single regression tree model which resulted in the smallest root mean squared error is with a complexity parameter of 0.047. It has RMSE = 1.52, and $R^2$ = 0.37. In this case, it does not account for the largest portion of the variability in the data than all other variables, but it produces the smallest error which makes it the best fit. 
+
+##### Random Forest
+
+```{r}
+set.seed(525)
+rf.model = train(x = train.p,
+                 y = train.r,
+                 method = "rf",
+                 tuneLength = 10,
+                 trControl = trainControl(method = "cv", 
+                                          repeats = 5))
+```
+```{r}
+rf.model$bestTune
+
+data.frame(rsquared = rf.model[["results"]][["Rsquared"]][as.numeric(rownames(rf.model$bestTune))],
+           rmse = rf.model[["results"]][["RMSE"]][as.numeric(rownames(rf.model$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(rf.model, main = "RMSE of Random Forest Model")
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the random forest model which resulted in the smallest root mean squared error is with the optimal number of randomly selected predictors to choose from at each split being 12. It has RMSE = 1.16, and $R^2$ = 0.65. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error which makes it the best fit. 
+
+##### Gradient Boosting
+
+```{r}
+set.seed(525)
+gbmGrid = expand.grid(interaction.depth = seq(1,5, by=2), 
+                      n.trees = seq(100, 1000, by = 100), 
+                      shrinkage = 0.1, 
+                      n.minobsinnode = 5)
+
+gbm.model = train(x = train.p,
+                 y = train.r,
+                 method = "gbm",
+                 tuneGrid = gbmGrid,
+                 trControl = trainControl(method = "cv",
+                                          repeats = 5),
+                 verbose = FALSE)
+```
+```{r}
+gbm.model$bestTune
+
+data.frame(rsquared = gbm.model[["results"]][["Rsquared"]][as.numeric(rownames(gbm.model$bestTune))],
+           rmse = gbm.model[["results"]][["RMSE"]][as.numeric(rownames(gbm.model$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(gbm.model, main = "RMSE of Gradient Boosted Model")
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the tree model is to tune over interaction depth, number of trees, and shrinkage. The tuning grid which resulted in the smallest root mean squared error is with these parameters: `ntrees` = 800, interaction depth of 5, shrinkage on 0.1, and the minimum number of observations in trees' terminal nodes is 5. It has RMSE = 1.31, and $R^2$ = 0.55. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error which makes it the best fit. 
+
+##### Cubist
+
+```{r}
+set.seed(525)
+cub.model = train(x = train.p,
+                  y = train.r,
+                  method = "cubist",
+                  tuneLength = 10,
+                  trControl = trainControl(method = "cv", 
+                                           repeats = 5))
+```
+```{r}
+cub.model$bestTune
+
+data.frame(rsquared = cub.model[["results"]][["Rsquared"]][as.numeric(rownames(cub.model$bestTune))],
+           rmse = cub.model[["results"]][["RMSE"]][as.numeric(rownames(cub.model$bestTune))])
+```
+
+```{r echo = FALSE, fig.height=4, fig.width=8}
+plot(cub.model, main = "RMSE of Cubist Tree Model")
+```
+
+RMSE was used to select the optimal model using the smallest value. The best tune for the cubist model which resulted in the smallest root mean squared error is with 200 committees and correct the prediction using the 5-nearest neighbors. It has RMSE = 1.12, and $R^2$ = 0.64. In this case, it does account for the largest portion of the variability in the data than all other variables, and it produces the smallest error which makes it the best fit. 
+
+### Part A
+
+Which tree-based regression model gives the optimal resampling and test set performance?
+
+By conducting a resampling method, performance metrics were collected and analyzed to determine the model that best fits the training data. The results below suggest that the random forest tree model had the largest mean $R^2$ = 0.65 from the 10 sample cross-validations. However, it does not produce the smallest RMSE. It is the Cubist model that produced the smallest errors, RMSE = 1.12. The best model, based on the RMSE, is the Cubist tree model that best fitted the training data than the single regression tree, random forest, and gradient boosted models.
+
+```{r}
+set.seed(525)
+summary(resamples(list(single = sig.model, 
+                       rf = rf.model, 
+                       gbm = gbm.model, 
+                       cubist = cub.model)))
+```
+
+Now, let’s use the best model to make predictions with the test predictive variables and compare the accuracy to the actual test responses.
+
+```{r}
+accuracy = function(models, predictors, response){
+  acc = list()
+  i = 1
+  for (model in models){
+    predictions = predict(model, newdata = predictors)
+    acc[[i]] = postResample(pred = predictions, obs = response)
+    i = i + 1
+  }
+  names(acc) = c("single", "rf", "gbm", "cubist")
+  return(acc)
+}
+
+models = list(sig.model, rf.model, gbm.model, cub.model)
+accuracy(models, test.p, test.r)
+```
+
+From the results, it can be concluded that the Cubist model predicted the test response with the best accuracy. It has $R^2$ = 0.83 and RMSE = 0.77.
+
+### Part B
+
+Which predictors are most important in the optimal tree-based regression model? Do either the biological or process variables dominate the list? How do the top 10 important predictors compare to the top 10 predictors from the optimal linear and nonlinear models?
+
+The top 20 most important variable out 47 is ranked below. The `caret::varImp` calculation of variable importance for regression is the relationship between each predictor and the outcome from a linear model fit and the $R^2$ statistic is calculated for this model against the intercept only null model. This number is returned as a relative measure of variable importance. The list shows that the most contributive variable is `ManufacturingProcess32`. As a result, it shows that Manufacturing Processes dominate the list.
+
+```{r}
+varImp(cub.model)
+```
+
+It was the SVM model that best fitted the data for the non-linear models While Manufacturing Processes still dominated the list, their ranks are different than those compared to the nonlinear model.
+
+```{r}
+set.seed(525)
+svm.model = train(x = train.p, 
+                 y = train.r,
+                 method = "svmRadial",
+                 preProc = c("center", "scale"),
+                 tuneLength = 14,
+                 trControl = trainControl(method = "cv"))
+```
+
+It was the elastic net linear model that best fitted the data, and it only needed 15 variables of the 47. While Manufacturing Processes still dominated the list, their ranks are different than those compared to the nonlinear model and regression tree model.
+
+```{r}
+# Elastic Net Regression
+set.seed(525)
+elastic.model = train(x = train.p, y = train.r, method = "glmnet",
+                      trControl = trainControl("cv", number = 10),
+                      tuneLength = 10)
+```
+
+
+```{r fig.width=10}
+p1 = plot(varImp(elastic.model), top = 10, main = "Linear Model: Elastic Net")
+p2 = plot(varImp(svm.model), top = 10, main = "Non-Linear Model: SVM")
+p3 = plot(varImp(cub.model), top = 10, main = "Regression Tree: Cubist")
+gridExtra::grid.arrange(p1,p2,p3, ncol = 3)
+```
+
+From the importance plot above, each model ranked all other variables differently except for `ManufactingProcess32`. The non-linear model (SVM) has distributed importance to a few more biological materials than the other two models. It is interesting to see that `ManufractingProcess09` was the second most important variable for the regression tree and linear models, and `BiologicalMaterial06` was the top-ranking biological material variable for the linear and non-linear model.
+
+### Part C
+
+Plot the optimal single tree with the distribution of yield in the terminal nodes. Does this view of the data provide additional knowledge about the biological or process predictors and their relationship with yield?
+
+```{r}
+sig.model$finalModel
+```
+
+```{r}
+rpart.plot::rpart.plot(sig.model$finalModel, box.palette = "RdBu", shadow.col = "gray", nn = TRUE)
+```
+
+The plot above of the optimal single tree model highlights that splits begins with `ManufractingProcess32` at 0.232. If it is less than 0.232, the yield will be 39.19, while if it is more than or equal to 0.232, the yield will be 41.79. Then the tree branches to terminal nodes and based on these values, the yield can further improve. This view of the data provides additional knowledge about the process predictors and their relationship with yield since the higher values, the higher the yield will become.
